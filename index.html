@@ -1,0 +1,2630 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Paper Trainer</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" async></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0f172a; --surface: #1e293b; --surface2: #334155;
+  --primary: #3b82f6; --primary-dark: #2563eb;
+  --accent: #10b981; --warn: #f59e0b; --danger: #ef4444;
+  --text: #f1f5f9; --text2: #94a3b8; --text3: #64748b;
+  --radius: 12px; --shadow: 0 4px 24px rgba(0,0,0,.3);
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text);
+  min-height: 100dvh; overflow-x: hidden;
+}
+button { cursor: pointer; border: none; font-family: inherit; }
+input, textarea { font-family: inherit; }
+
+/* Navigation */
+.nav {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--surface); border-top: 1px solid var(--surface2);
+  display: flex; z-index: 100; padding-bottom: env(safe-area-inset-bottom);
+}
+.nav-btn {
+  flex: 1; padding: 8px 2px 6px; background: none; color: var(--text3);
+  font-size: 9px; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  transition: color .2s; min-width: 0;
+}
+.nav-btn.active { color: var(--primary); }
+.nav-btn svg { width: 20px; height: 20px; }
+
+/* Pages */
+.page { display: none; padding: 16px 16px 80px; min-height: 100dvh; }
+.page.active { display: block; }
+.page-title { font-size: 24px; font-weight: 700; margin-bottom: 16px; }
+
+/* Import page */
+.import-area {
+  width: 100%; min-height: 200px; padding: 16px;
+  background: var(--surface); border: 2px dashed var(--surface2);
+  border-radius: var(--radius); color: var(--text); font-size: 14px;
+  resize: vertical; line-height: 1.6;
+}
+.import-area:focus { border-color: var(--primary); outline: none; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 24px; border-radius: var(--radius);
+  font-size: 16px; font-weight: 600; transition: all .2s;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); }
+.btn-primary:disabled { opacity: .5; }
+.btn-secondary { background: var(--surface2); color: var(--text); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-block { width: 100%; }
+.btn-sm { padding: 8px 16px; font-size: 14px; }
+.mt { margin-top: 12px; }
+.mt2 { margin-top: 24px; }
+
+/* Stats bar */
+.stats-bar {
+  display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.stat-chip {
+  background: var(--surface); padding: 8px 14px; border-radius: 20px;
+  font-size: 13px; color: var(--text2);
+}
+.stat-chip strong { color: var(--text); margin-right: 4px; }
+
+/* Word list */
+.word-list { display: flex; flex-direction: column; gap: 8px; }
+.word-card {
+  background: var(--surface); border-radius: var(--radius); padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: background .2s;
+}
+.word-card:active { background: var(--surface2); }
+.word-info { flex: 1; min-width: 0; }
+.word-text { font-size: 16px; font-weight: 600; }
+.word-count { font-size: 12px; color: var(--text3); margin-top: 2px; }
+.word-status { font-size: 11px; padding: 4px 10px; border-radius: 12px; font-weight: 600; }
+.status-new { background: rgba(59,130,246,.15); color: var(--primary); }
+.status-learning { background: rgba(245,158,11,.15); color: var(--warn); }
+.status-known { background: rgba(16,185,129,.15); color: var(--accent); }
+
+/* Flashcard */
+.flashcard-container {
+  display: flex; flex-direction: column; align-items: center;
+  padding-top: 20px;
+}
+.flashcard {
+  width: 100%; max-width: 360px; min-height: 220px;
+  background: var(--surface); border-radius: 16px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 32px 24px; text-align: center;
+  box-shadow: var(--shadow); position: relative;
+  transition: transform .3s;
+}
+.flashcard.flipped { transform: rotateY(0); }
+.flashcard-word { font-size: 28px; font-weight: 700; }
+.flashcard-hint {
+  font-size: 13px; color: var(--text3); margin-top: 12px;
+}
+.flashcard-meaning {
+  font-size: 18px; color: var(--accent); margin-top: 16px;
+  line-height: 1.5; display: none;
+}
+.flashcard-meaning.show { display: block; }
+.flashcard-sentence {
+  font-size: 14px; color: var(--text2); margin-top: 12px;
+  line-height: 1.5; display: none;
+}
+.flashcard-sentence.show { display: block; }
+.flashcard-actions {
+  display: flex; gap: 12px; margin-top: 24px; width: 100%; max-width: 360px;
+}
+.flashcard-actions .btn { flex: 1; }
+.fc-progress {
+  font-size: 14px; color: var(--text3); margin-top: 16px;
+}
+
+/* Exercise page */
+.exercise-box {
+  background: var(--surface); border-radius: var(--radius);
+  padding: 20px; margin-bottom: 16px;
+}
+.exercise-type {
+  font-size: 12px; color: var(--primary); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
+}
+.exercise-prompt {
+  font-size: 16px; line-height: 1.6; margin-bottom: 16px;
+}
+.exercise-prompt .blank {
+  display: inline-block; min-width: 80px; border-bottom: 2px solid var(--primary);
+  margin: 0 4px; text-align: center; color: var(--primary); font-weight: 600;
+}
+.exercise-input {
+  width: 100%; padding: 12px 16px; background: var(--bg);
+  border: 2px solid var(--surface2); border-radius: var(--radius);
+  color: var(--text); font-size: 16px; transition: border-color .2s;
+}
+.exercise-input:focus { border-color: var(--primary); outline: none; }
+.exercise-feedback {
+  margin-top: 12px; padding: 12px 16px; border-radius: var(--radius);
+  font-size: 14px; line-height: 1.5; display: none;
+}
+.feedback-correct {
+  background: rgba(16,185,129,.1); color: var(--accent);
+  display: block;
+}
+.feedback-incorrect {
+  background: rgba(239,68,68,.1); color: var(--danger);
+  display: block;
+}
+
+/* Word chips for reorder */
+.word-chips {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  min-height: 44px; padding: 8px;
+  background: var(--bg); border-radius: var(--radius);
+}
+.word-chip {
+  padding: 8px 14px; background: var(--surface2); border-radius: 8px;
+  font-size: 15px; color: var(--text); cursor: pointer;
+  transition: all .15s; user-select: none;
+}
+.word-chip:active { transform: scale(.95); }
+.word-chip.selected { background: var(--primary); }
+.answer-zone {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+  min-height: 44px; padding: 8px;
+  background: var(--surface2); border-radius: var(--radius);
+  border: 2px dashed var(--text3);
+}
+
+/* Settings */
+.setting-group {
+  background: var(--surface); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 12px;
+}
+.setting-label { font-size: 14px; color: var(--text2); margin-bottom: 8px; }
+.setting-value { font-size: 16px; font-weight: 600; }
+select {
+  width: 100%; padding: 10px 12px; background: var(--bg); color: var(--text);
+  border: 2px solid var(--surface2); border-radius: 8px; font-size: 15px;
+}
+select:focus { border-color: var(--primary); outline: none; }
+
+/* Tabs */
+.tab-bar {
+  display: flex; gap: 4px; background: var(--surface); border-radius: var(--radius);
+  padding: 4px; margin-bottom: 16px;
+}
+.tab-btn {
+  flex: 1; padding: 10px; background: none; color: var(--text3);
+  border-radius: 8px; font-size: 14px; font-weight: 600;
+  transition: all .2s;
+}
+.tab-btn.active { background: var(--primary); color: #fff; }
+
+/* Filter */
+.filter-bar {
+  display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto;
+  -webkit-overflow-scrolling: touch; padding-bottom: 4px;
+}
+.filter-chip {
+  padding: 8px 16px; background: var(--surface); border-radius: 20px;
+  font-size: 13px; color: var(--text2); white-space: nowrap;
+  cursor: pointer; transition: all .2s;
+}
+.filter-chip.active { background: var(--primary); color: #fff; }
+
+/* Search */
+.search-box {
+  width: 100%; padding: 10px 16px; background: var(--surface);
+  border: none; border-radius: var(--radius); color: var(--text);
+  font-size: 15px; margin-bottom: 12px;
+}
+.search-box:focus { outline: 2px solid var(--primary); }
+
+/* Modal */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  z-index: 200; display: none; align-items: flex-end; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: var(--surface); border-radius: 16px 16px 0 0;
+  padding: 24px 16px; width: 100%; max-width: 480px;
+  max-height: 70dvh; overflow-y: auto;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+.modal-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; }
+.modal-input {
+  width: 100%; padding: 12px; background: var(--bg);
+  border: 2px solid var(--surface2); border-radius: 8px;
+  color: var(--text); font-size: 15px; margin-bottom: 12px;
+}
+.modal-input:focus { border-color: var(--primary); outline: none; }
+
+/* Empty state */
+.empty-state {
+  text-align: center; padding: 48px 24px; color: var(--text3);
+}
+.empty-state svg { width: 64px; height: 64px; margin-bottom: 16px; opacity: .5; }
+.empty-state p { font-size: 15px; line-height: 1.5; }
+
+/* Speech buttons */
+.btn-speak {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--surface2); color: var(--text); flex-shrink: 0;
+  transition: all .2s;
+}
+.btn-speak:active { background: var(--primary); }
+.btn-speak.speaking { background: var(--primary); animation: pulse 1s infinite; }
+.btn-speak svg { width: 18px; height: 18px; }
+
+/* Pronunciation */
+.btn-mic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--danger); color: #fff; flex-shrink: 0;
+  transition: all .2s;
+}
+.btn-mic.recording { animation: pulse 1s infinite; }
+.btn-mic svg { width: 28px; height: 28px; }
+.pronunciation-result {
+  margin-top: 16px; padding: 16px; border-radius: var(--radius);
+  background: var(--surface); text-align: center;
+}
+.pronunciation-score {
+  font-size: 48px; font-weight: 700;
+}
+.score-good { color: var(--accent); }
+.score-ok { color: var(--warn); }
+.score-bad { color: var(--danger); }
+.recognized-text {
+  font-size: 16px; color: var(--text2); margin-top: 8px; line-height: 1.5;
+}
+
+/* Drop zone */
+.drop-zone {
+  position: relative; width: 100%; min-height: 160px;
+  border: 2px dashed var(--surface2); border-radius: var(--radius);
+  background: var(--surface); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px;
+  padding: 24px; text-align: center; cursor: pointer;
+  transition: all .2s;
+}
+.drop-zone.dragover { border-color: var(--primary); background: rgba(59,130,246,.08); }
+.drop-zone svg { width: 48px; height: 48px; color: var(--text3); }
+.drop-zone p { color: var(--text2); font-size: 14px; line-height: 1.5; }
+.drop-zone .format-hint { font-size: 12px; color: var(--text3); }
+.drop-zone input[type="file"] {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
+.import-progress {
+  margin-top: 12px; padding: 12px 16px; border-radius: var(--radius);
+  background: var(--surface); font-size: 14px; color: var(--text2);
+  display: none;
+}
+.import-progress.show { display: block; }
+.progress-bar {
+  height: 4px; background: var(--surface2); border-radius: 2px;
+  margin-top: 8px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; background: var(--primary); border-radius: 2px;
+  transition: width .3s;
+}
+
+/* Animations */
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .6; }
+}
+.modal-overlay.show .modal { animation: slideUp .3s ease; }
+</style>
+</head>
+<body>
+
+<!-- Import Page -->
+<div class="page active" id="page-import">
+  <h1 class="page-title">Paper Trainer</h1>
+  <p style="color:var(--text2);margin-bottom:16px;font-size:14px;">
+    PDFやテキストファイルをドロップ、またはタップして取り込み
+  </p>
+
+  <!-- Drop Zone -->
+  <div class="drop-zone" id="dropZone">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <p><strong>PDF / TXT / DOCX</strong> をドロップ<br>またはタップしてファイル選択</p>
+    <span class="format-hint">複数ファイルOK</span>
+    <input type="file" id="fileInput" accept=".pdf,.txt,.text,.docx,.doc" multiple>
+  </div>
+
+  <!-- Progress -->
+  <div class="import-progress" id="importProgress">
+    <span id="progressText">読み込み中...</span>
+    <div class="progress-bar"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
+  </div>
+
+  <!-- Or paste text -->
+  <details class="mt2" style="color:var(--text2);">
+    <summary style="cursor:pointer;font-size:14px;padding:8px 0;">テキスト直接貼り付け</summary>
+    <textarea class="import-area" id="importText" placeholder="英文テキストをここに貼り付け..." style="margin-top:8px;min-height:120px;"></textarea>
+    <button class="btn btn-primary btn-block btn-sm mt" id="btnImport">テキストを解析</button>
+  </details>
+
+  <div id="importedPapers" class="mt2"></div>
+</div>
+
+<!-- Vocabulary Page -->
+<div class="page" id="page-vocab">
+  <h1 class="page-title">単語帳</h1>
+  <input class="search-box" id="vocabSearch" placeholder="単語を検索...">
+  <div class="filter-bar" id="vocabFilter">
+    <div class="filter-chip active" data-filter="all">すべて</div>
+    <div class="filter-chip" data-filter="new">New</div>
+    <div class="filter-chip" data-filter="learning">学習中</div>
+    <div class="filter-chip" data-filter="known">習得済</div>
+  </div>
+  <div class="filter-bar" id="levelFilter">
+    <div class="filter-chip active" data-level="all">全レベル</div>
+    <div class="filter-chip" data-level="1" style="border:1px solid var(--primary);">Intermediate</div>
+    <div class="filter-chip" data-level="2" style="border:1px solid var(--warn);">Advanced</div>
+    <div class="filter-chip" data-level="3" style="border:1px solid var(--danger);">Expert</div>
+  </div>
+  <div class="stats-bar" id="vocabStats"></div>
+  <div class="word-list" id="wordList"></div>
+  <div class="empty-state" id="vocabEmpty" style="display:none;">
+    <p>まだ単語がありません。<br>論文テキストを取り込んでください。</p>
+  </div>
+</div>
+
+<!-- Flashcard Page -->
+<div class="page" id="page-flash">
+  <h1 class="page-title">フラッシュカード</h1>
+  <div class="tab-bar" id="flashMode">
+    <button class="tab-btn active" data-mode="en-ja">英→日</button>
+    <button class="tab-btn" data-mode="ja-en">日→英</button>
+  </div>
+  <div class="filter-bar" id="flashLevelFilter">
+    <div class="filter-chip active" data-level="all">全レベル</div>
+    <div class="filter-chip" data-level="1" style="border:1px solid var(--primary);">Inter</div>
+    <div class="filter-chip" data-level="2" style="border:1px solid var(--warn);">Adv</div>
+    <div class="filter-chip" data-level="3" style="border:1px solid var(--danger);">Expert</div>
+  </div>
+  <div class="flashcard-container" id="flashContainer">
+    <div class="flashcard" id="flashcard">
+      <div class="flashcard-word" id="flashWord">-</div>
+      <button class="btn-speak" id="flashSpeak" title="読み上げ" style="margin-top:8px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+      </button>
+      <div class="flashcard-hint" id="flashHint">タップで意味を表示</div>
+      <div class="flashcard-meaning" id="flashMeaning"></div>
+      <div class="flashcard-sentence" id="flashSentence"></div>
+      <button class="btn-speak" id="flashSpeakSentence" title="文を読み上げ" style="margin-top:4px;display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+      </button>
+    </div>
+    <div class="flashcard-actions">
+      <button class="btn btn-danger btn-sm" id="btnHard">もう一度</button>
+      <button class="btn btn-secondary btn-sm" id="btnFlip">めくる</button>
+      <button class="btn btn-sm" style="background:var(--accent);color:#fff;" id="btnEasy">覚えた</button>
+    </div>
+    <div class="fc-progress" id="flashProgress">0 / 0</div>
+  </div>
+  <div class="empty-state" id="flashEmpty" style="display:none;">
+    <p>学習する単語がありません。<br>まず論文を取り込んでください。</p>
+  </div>
+</div>
+
+<!-- Exercise Page -->
+<div class="page" id="page-exercise">
+  <h1 class="page-title">英作文トレーニング</h1>
+  <div class="tab-bar" id="exerciseMode">
+    <button class="tab-btn active" data-type="fill">穴埋め</button>
+    <button class="tab-btn" data-type="reorder">並べ替え</button>
+    <button class="tab-btn" data-type="write">英作文</button>
+    <button class="tab-btn" data-type="speak">発音</button>
+  </div>
+  <div id="exerciseArea"></div>
+  <div class="empty-state" id="exerciseEmpty" style="display:none;">
+    <p>トレーニングを始めるには<br>論文テキストを取り込んでください。</p>
+  </div>
+</div>
+
+<!-- Q&A Page -->
+<div class="page" id="page-qa">
+  <h1 class="page-title">質疑応答トレーニング</h1>
+  <div class="tab-bar" id="qaMode">
+    <button class="tab-btn active" data-qtype="content">内容質問</button>
+    <button class="tab-btn" data-qtype="method">方法論</button>
+    <button class="tab-btn" data-qtype="critical">批判的</button>
+    <button class="tab-btn" data-qtype="general">汎用</button>
+  </div>
+  <div id="qaArea"></div>
+  <div class="empty-state" id="qaEmpty" style="display:none;">
+    <p>論文テキストを取り込むと<br>質疑応答の練習ができます。</p>
+  </div>
+</div>
+
+<!-- Phrases Page -->
+<div class="page" id="page-phrases">
+  <h1 class="page-title">定型文トレーニング</h1>
+  <div class="tab-bar" id="phraseCategory" style="flex-wrap:wrap;">
+    <button class="tab-btn active" data-cat="presentation">発表</button>
+    <button class="tab-btn" data-cat="qa-respond">質疑応答</button>
+    <button class="tab-btn" data-cat="discussion">議論</button>
+    <button class="tab-btn" data-cat="writing">論文執筆</button>
+  </div>
+  <div class="filter-bar" id="phraseMode">
+    <div class="filter-chip active" data-pmode="browse">一覧</div>
+    <div class="filter-chip" data-pmode="flash">フラッシュ</div>
+    <div class="filter-chip" data-pmode="dictation">ディクテーション</div>
+    <div class="filter-chip" data-pmode="fill">穴埋め</div>
+  </div>
+  <div id="phraseArea"></div>
+</div>
+
+<!-- Settings Page -->
+<div class="page" id="page-settings">
+  <h1 class="page-title">設定</h1>
+  <div class="setting-group">
+    <div class="setting-label">学習データ</div>
+    <div class="stats-bar" id="globalStats"></div>
+    <button class="btn btn-danger btn-sm btn-block mt" id="btnReset">すべてのデータをリセット</button>
+  </div>
+  <div class="setting-group">
+    <div class="setting-label">フラッシュカードの対象</div>
+    <select id="settingFlashTarget">
+      <option value="new-learning">New + 学習中</option>
+      <option value="new">Newのみ</option>
+      <option value="learning">学習中のみ</option>
+      <option value="all">すべて</option>
+    </select>
+  </div>
+  <div class="setting-group">
+    <div class="setting-label">1セッションの出題数</div>
+    <select id="settingSessionSize">
+      <option value="10">10問</option>
+      <option value="20" selected>20問</option>
+      <option value="30">30問</option>
+      <option value="50">50問</option>
+      <option value="0">全問</option>
+    </select>
+  </div>
+  <div class="setting-group">
+    <div class="setting-label">取り込み済み論文</div>
+    <div id="paperList"></div>
+  </div>
+</div>
+
+<!-- Word Detail Modal -->
+<div class="modal-overlay" id="wordModal">
+  <div class="modal">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div class="modal-title" id="modalWord" style="margin-bottom:0;">-</div>
+      <button class="btn-speak" id="modalSpeak" title="読み上げ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+      </button>
+    </div>
+    <div style="margin-bottom:16px;"></div>
+    <div id="modalPhonetic" style="font-size:14px;color:var(--text3);margin-bottom:12px;"></div>
+    <div id="modalDefEnglish" style="font-size:14px;color:var(--text2);line-height:1.5;margin-bottom:12px;display:none;"></div>
+    <div class="setting-group">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div class="setting-label" style="margin-bottom:0;">意味（日本語）</div>
+        <button class="btn btn-sm btn-primary" id="modalLookup" style="padding:6px 12px;font-size:12px;">辞書検索</button>
+      </div>
+      <input class="modal-input" id="modalMeaning" placeholder="意味を入力...">
+      <div id="modalLookupStatus" style="font-size:12px;color:var(--text3);margin-top:4px;"></div>
+    </div>
+    <div class="setting-group">
+      <div class="setting-label">ステータス</div>
+      <select id="modalStatus">
+        <option value="new">New</option>
+        <option value="learning">学習中</option>
+        <option value="known">習得済</option>
+      </select>
+    </div>
+    <div class="setting-group">
+      <div class="setting-label">出現文</div>
+      <div id="modalSentences" style="font-size:14px;color:var(--text2);line-height:1.6;"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary btn-block" id="modalSave">保存</button>
+      <button class="btn btn-secondary" id="modalClose">閉じる</button>
+      <button class="btn btn-danger btn-sm" id="modalDelete" title="削除">削除</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom Navigation -->
+<nav class="nav">
+  <button class="nav-btn active" data-page="import">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
+    <span>取込</span>
+  </button>
+  <button class="nav-btn" data-page="vocab">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg>
+    <span>単語帳</span>
+  </button>
+  <button class="nav-btn" data-page="flash">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M12 10v4M10 12h4"/></svg>
+    <span>カード</span>
+  </button>
+  <button class="nav-btn" data-page="exercise">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5l-10 10L3 15l1.5-3.5 10-10a2.12 2.12 0 013 3z"/></svg>
+    <span>英作文</span>
+  </button>
+  <button class="nav-btn" data-page="phrases">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+    <span>定型文</span>
+  </button>
+  <button class="nav-btn" data-page="qa">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span>Q&A</span>
+  </button>
+  <button class="nav-btn" data-page="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    <span>設定</span>
+  </button>
+</nav>
+
+<script>
+console.log('Paper Trainer: script start');
+try {
+// ============ DATA LAYER ============
+const DB_KEY = 'paperTrainer';
+
+function defaultData() {
+  return { words: {}, papers: [], sentences: [], settings: { flashTarget: 'new-learning', sessionSize: 20 } };
+}
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(DB_KEY);
+    if (!raw) return defaultData();
+    const data = JSON.parse(raw);
+    if (!data || !data.words) return defaultData();
+    return data;
+  } catch (e) {
+    console.error('Data load error:', e);
+    return defaultData();
+  }
+}
+
+function saveData(data) {
+  localStorage.setItem(DB_KEY, JSON.stringify(data));
+}
+
+let APP = loadData();
+
+// ============ TEXT PROCESSING ============
+// Common English stop words to exclude
+const STOP_WORDS = new Set([
+  'the','be','to','of','and','a','in','that','have','i','it','for','not','on','with','he',
+  'as','you','do','at','this','but','his','by','from','they','we','say','her','she','or',
+  'an','will','my','one','all','would','there','their','what','so','up','out','if','about',
+  'who','get','which','go','me','when','make','can','like','time','no','just','him','know',
+  'take','people','into','year','your','good','some','could','them','see','other','than',
+  'then','now','look','only','come','its','over','think','also','back','after','use','two',
+  'how','our','work','first','well','way','even','new','want','because','any','these','give',
+  'day','most','us','is','are','was','were','been','being','has','had','having','does','did',
+  'doing','will','shall','should','would','may','might','must','can','could','am','is','are',
+  'was','were','be','been','being','have','has','had','having','do','does','did','a','an',
+  'the','and','but','or','nor','for','yet','so','both','either','neither','each','every',
+  'such','no','not','very','own','same','much','more','most','other','another','here','there',
+  'where','when','while','than','too','also','however','therefore','thus','hence','although',
+  'though','yet','still','already','between','through','during','before','after','above',
+  'below','under','again','further','once','et','al','fig','table','figure','ref','vol',
+  'pp','ie','eg','etc','vs','using','used','based','may','within','among','across',
+  'per','via','non','de','des','les','une','la','le','der','die','das','und','von',
+  'were','was','been','those','data','study','studies','results','method','methods',
+  'showed','found','observed','reported','described','obtained','compared','determined',
+  'measured','performed','conducted','examined','investigated','demonstrated','indicated',
+  'suggested','proposed','presented','discussed','concluded','noted','shown','given',
+  'include','including','included','includes','respectively','significantly','however',
+  'although','whereas','furthermore','moreover','therefore','nevertheless','thus','hence',
+  'consequently','subsequently','previously','recently','currently','generally','typically',
+  'approximately','particularly','specifically','especially','mainly','primarily','often'
+]);
+
+// ---- Scientific term detection ----
+// Greek/Latin prefixes common in scientific terminology
+const SCI_PREFIXES = [
+  'bio','geo','hydro','thermo','photo','electro','neuro','cardio','hemo','haemo',
+  'gastro','hepato','nephro','osteo','arthro','cyto','histo','patho','physio',
+  'pharmaco','immuno','endo','exo','epi','hypo','hyper','intra','extra','inter',
+  'macro','micro','nano','mega','ultra','infra','supra','sub','super','trans',
+  'mono','di','tri','tetra','penta','hexa','poly','multi','omni','semi','hemi',
+  'iso','homo','hetero','auto','allo','anti','contra','para','peri','proto',
+  'pseudo','quasi','meta','ortho','retro','pro','pre','post','neo','paleo',
+  'archaeo','chrono','crypto','dys','eu','mal','mis','cata','ana','syn',
+  'aero','aqua','pyro','litho','morpho','chromo','spectro','stereo',
+  'amino','carbo','glyco','lipo','nucleo','phospho','ribo','deoxy',
+  'calc','ferr','magn','sulf','sulph','chlor','fluor','brom','nitr','oxi'
+];
+// Suffixes that mark scientific/technical terms
+const SCI_SUFFIXES = [
+  'ology','ologist','osis','otic','itis','asis','esis','ysis',
+  'tion','sion','ment','ence','ance','ency','ancy',
+  'ical','ious','eous','uous','ative','itive','ular','ible','able',
+  'iform','escent','escence','genic','geny','genesis','lysis','lytic',
+  'metric','metry','scopy','scope','graph','graphy','gram',
+  'phyte','phytic','cyte','blast','plast','plasm','soma','mere',
+  'trophic','trophy','tropic','tropism','philic','phobic','philia',
+  'kinase','ase','ose','ide','ate','ite','ene','ine','ole','one',
+  'oid','oma','emia','aemia','uria','pathy','plasty','ectomy','otomy',
+  'ification','ization','aceous','ified','ized',
+  'valent','molar','thermal','static','dynamic','vascular','cellular',
+  'skeletal','tidal','luminal','basal','axial','orbital','nodal','zonal'
+];
+// Regex for scientific morphology
+const sciPrefixRe = new RegExp('^(' + SCI_PREFIXES.join('|') + ')', 'i');
+const sciSuffixRe = new RegExp('(' + SCI_SUFFIXES.join('|') + ')$', 'i');
+
+// Common everyday words that accidentally match sci patterns
+const SCI_FALSE_POSITIVES = new Set([
+  'about','above','action','addition','after','again','against','also','another',
+  'attention','available','balance','become','before','between','billion','bottom',
+  'bring','broken','business','came','came','capable','carbon','cause','center',
+  'central','change','children','chosen','climate','close','collection','come',
+  'comment','commission','common','communication','complete','condition','connection',
+  'consider','consideration','contain','content','continue','contribution','control',
+  'conversation','could','counter','couple','creation','current','dance','define',
+  'definition','demonstrate','derive','despite','determine','different','direction',
+  'discussion','done','down','drive','during','each','education','effective',
+  'election','else','emotion','enable','entire','equal','even','every','everyone',
+  'everything','evidence','evolution','examination','example','exchange','excite',
+  'executive','exercise','experience','explain','explanation','explore','expression',
+  'extensive','extreme','face','father','feature','fiction','figure','final',
+  'finance','find','fine','first','five','floor','follow','force','foreign',
+  'formation','former','fortune','foundation','four','fraction','frame','free',
+  'from','front','full','function','future','game','general','generation','gone',
+  'have','here','home','hope','house','imagine','immediate','importance','improve',
+  'increase','indicate','information','inside','instance','institution','insurance',
+  'intelligence','intention','into','introduction','investigation','involve','issue',
+  'justice','large','late','later','leave','left','like','line','little','live',
+  'location','long','lose','made','make','manage','mention','mine','minute','mission',
+  'more','morning','motion','move','name','narrative','nation','national','native',
+  'nice','nine','none','note','nothing','notice','notion','number','obvious',
+  'occasion','once','only','operation','opinion','option','orange','other','outside',
+  'over','place','plane','please','police','polite','political','popular','population',
+  'portion','position','possible','practice','prepare','presence','present',
+  'presentation','president','pressure','private','problem','production','promise',
+  'promote','protection','provide','public','publication','purpose','question',
+  'quite','race','raise','range','rate','rather','reaction','reason','receive',
+  'recent','recognize','reduce','reference','reflection','region','relation',
+  'relative','remember','remove','replace','represent','require','resource',
+  'response','result','return','rise','same','scene','science','season','section',
+  'selection','sense','sentence','separate','serve','service','session','seven',
+  'several','share','show','side','silence','similar','simple','since','single',
+  'situation','size','smile','some','sometimes','something','somewhere','sort',
+  'source','space','special','specific','stable','stage','standard','start','state',
+  'statement','station','stone','store','strange','structure','style','substance',
+  'suggest','suggestion','summer','sure','surface','surprise','table','take',
+  'television','temperature','therefore','these','thing','think','those','thousand',
+  'three','through','time','together','tone','total','toward','trouble','true',
+  'turn','twelve','type','under','unless','until','upon','value','very','violence',
+  'volume','vote','while','whole','wide','window','winter','without','wonder',
+  'write','written','wrong','zone'
+]);
+
+// Difficulty scoring: higher = harder / more specialized
+function scoreDifficulty(word) {
+  let score = 0;
+  // Length bonus
+  if (word.length >= 10) score += 2;
+  else if (word.length >= 7) score += 1;
+  // Prefix match
+  if (sciPrefixRe.test(word)) score += 2;
+  // Suffix match
+  if (sciSuffixRe.test(word)) score += 2;
+  // Double affix (prefix + suffix both match) = very technical
+  if (sciPrefixRe.test(word) && sciSuffixRe.test(word)) score += 2;
+  // Hyphenated compound
+  if (word.includes('-')) score += 1;
+  // Contains numbers-like fragments or unusual clusters
+  if (/[xzq]/.test(word)) score += 1;
+  return score;
+}
+
+// Level thresholds
+// 1 = intermediate (score 1-2), 2 = advanced (score 3-4), 3 = expert (score 5+)
+function difficultyLevel(score) {
+  if (score >= 5) return 3;
+  if (score >= 3) return 2;
+  return 1;
+}
+function difficultyLabel(level) {
+  return ['', 'Intermediate', 'Advanced', 'Expert'][level] || '';
+}
+function difficultyColor(level) {
+  return ['', 'var(--primary)', 'var(--warn)', 'var(--danger)'][level] || '';
+}
+
+function extractWords(text) {
+  // Split into sentences
+  const sentenceRegex = /[^.!?]+[.!?]+/g;
+  const sentences = [];
+  let match;
+  while ((match = sentenceRegex.exec(text)) !== null) {
+    const s = match[0].trim();
+    if (s.split(/\s+/).length >= 4) sentences.push(s);
+  }
+
+  // Build a set of likely proper nouns (capitalized mid-sentence)
+  const properNouns = new Set();
+  const lowerWords = new Set();
+  for (const sentence of sentences) {
+    const tokens = sentence.split(/\s+/);
+    for (let i = 1; i < tokens.length; i++) {
+      const t = tokens[i].replace(/[^a-zA-Z-]/g, '');
+      if (t.length < 2) continue;
+      if (t[0] === t[0].toUpperCase() && t[0] !== t[0].toLowerCase()) {
+        properNouns.add(t.toLowerCase());
+      } else {
+        lowerWords.add(t.toLowerCase());
+      }
+    }
+  }
+  // If a word also appears lowercase, it's not a proper noun
+  for (const w of lowerWords) properNouns.delete(w);
+
+  // First pass: count all non-stop words to compute TF for the paper
+  const rawCounts = {};
+  const wordRegex = /[a-zA-Z][-a-zA-Z]{2,}/g;
+  for (const sentence of sentences) {
+    const found = sentence.match(wordRegex) || [];
+    for (const raw of found) {
+      const w = raw.toLowerCase();
+      rawCounts[w] = (rawCounts[w] || 0) + 1;
+    }
+  }
+
+  // Second pass: filter to scientific terms with difficulty scoring
+  const wordMap = {};
+  for (const sentence of sentences) {
+    const found = sentence.match(wordRegex) || [];
+    for (const raw of found) {
+      const w = raw.toLowerCase();
+      if (STOP_WORDS.has(w)) continue;
+      if (SCI_FALSE_POSITIVES.has(w)) continue;
+      if (w.length < 5) continue;
+      if (properNouns.has(w)) continue;
+      if (raw === raw.toUpperCase() && raw.length <= 5) continue;
+
+      // Score scientific difficulty
+      let score = scoreDifficulty(w);
+      // Bonus for paper-specific frequency (repeated term = domain keyword)
+      const freq = rawCounts[w] || 0;
+      if (freq >= 5) score += 2;
+      else if (freq >= 3) score += 1;
+
+      // Must have at least some scientific signal
+      if (score < 1) continue;
+
+      const level = difficultyLevel(score);
+
+      if (!wordMap[w]) wordMap[w] = { count: 0, sentences: [], score, level };
+      wordMap[w].count++;
+      if (wordMap[w].sentences.length < 3 && !wordMap[w].sentences.includes(sentence)) {
+        wordMap[w].sentences.push(sentence);
+      }
+    }
+  }
+  return { wordMap, sentences };
+}
+
+function importText(text, paperName) {
+  const { wordMap, sentences: newSentences } = extractWords(text);
+
+  // Merge words
+  let addedCount = 0;
+  for (const [word, info] of Object.entries(wordMap)) {
+    if (!APP.words[word]) {
+      APP.words[word] = {
+        word, meaning: '', status: 'new',
+        count: info.count, sentences: info.sentences,
+        score: info.score || 0, level: info.level || 1,
+        paper: paperName, addedAt: Date.now()
+      };
+      addedCount++;
+    } else {
+      APP.words[word].count += info.count;
+      for (const s of info.sentences) {
+        if (APP.words[word].sentences.length < 5 && !APP.words[word].sentences.includes(s)) {
+          APP.words[word].sentences.push(s);
+        }
+      }
+    }
+  }
+
+  // Save sentences
+  APP.sentences.push(...newSentences);
+  APP.papers.push({ name: paperName, date: Date.now(), wordCount: addedCount, sentenceCount: newSentences.length });
+  saveData(APP);
+  return { addedCount, totalWords: Object.keys(wordMap).length, sentenceCount: newSentences.length };
+}
+
+// ============ SPEECH SYNTHESIS ============
+function speak(text, lang = 'en-US') {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = lang;
+  utter.rate = 0.85;
+  // Prefer English voice
+  const voices = speechSynthesis.getVoices();
+  const enVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Enhanced'))
+    || voices.find(v => v.lang.startsWith('en-US'))
+    || voices.find(v => v.lang.startsWith('en'));
+  if (enVoice) utter.voice = enVoice;
+  speechSynthesis.speak(utter);
+  return utter;
+}
+
+// Preload voices
+if ('speechSynthesis' in window) {
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+}
+
+// ============ SPEECH RECOGNITION ============
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+
+function startRecognition(onResult, onEnd) {
+  if (!SpeechRecognition) {
+    alert('お使いのブラウザは音声認識に対応していません。Chrome/Safariをお試しください。');
+    return false;
+  }
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 3;
+  recognition.continuous = false;
+
+  recognition.onresult = (e) => {
+    const results = [];
+    for (let i = 0; i < e.results[0].length; i++) {
+      results.push({
+        text: e.results[0][i].transcript,
+        confidence: e.results[0][i].confidence
+      });
+    }
+    onResult(results);
+  };
+
+  recognition.onerror = (e) => {
+    isRecording = false;
+    if (e.error !== 'no-speech') {
+      console.error('Speech recognition error:', e.error);
+    }
+    if (onEnd) onEnd();
+  };
+
+  recognition.onend = () => {
+    isRecording = false;
+    if (onEnd) onEnd();
+  };
+
+  recognition.start();
+  isRecording = true;
+  return true;
+}
+
+function stopRecognition() {
+  if (recognition && isRecording) {
+    recognition.stop();
+    isRecording = false;
+  }
+}
+
+function comparePronunciation(expected, recognized) {
+  const normalize = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  const exp = normalize(expected);
+  const rec = normalize(recognized);
+  if (exp === rec) return 100;
+  // Word-level comparison
+  const expWords = exp.split(/\s+/);
+  const recWords = rec.split(/\s+/);
+  let matches = 0;
+  for (const rw of recWords) {
+    if (expWords.includes(rw)) matches++;
+  }
+  return Math.round((matches / Math.max(expWords.length, 1)) * 100);
+}
+
+// ============ NAVIGATION ============
+const pages = document.querySelectorAll('.page');
+const navBtns = document.querySelectorAll('.nav-btn');
+
+function showPage(name) {
+  pages.forEach(p => p.classList.toggle('active', p.id === `page-${name}`));
+  navBtns.forEach(b => b.classList.toggle('active', b.dataset.page === name));
+  if (name === 'vocab') renderVocab();
+  if (name === 'flash') initFlashcards();
+  if (name === 'exercise') renderExercise();
+  if (name === 'settings') renderSettings();
+  if (name === 'qa') renderQA();
+  if (name === 'phrases') renderPhrases();
+  if (name === 'import') renderPaperHistory();
+}
+
+navBtns.forEach(btn => btn.addEventListener('click', () => showPage(btn.dataset.page)));
+
+// ============ PDF.js SETUP ============
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+// ============ FILE IMPORT ============
+function showProgress(text, pct) {
+  const el = document.getElementById('importProgress');
+  el.classList.add('show');
+  document.getElementById('progressText').textContent = text;
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+function hideProgress() {
+  document.getElementById('importProgress').classList.remove('show');
+}
+
+async function extractTextFromPDF(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const totalPages = pdf.numPages;
+  let fullText = '';
+
+  for (let i = 1; i <= totalPages; i++) {
+    showProgress(`PDF読み込み中... ${i}/${totalPages}ページ`, Math.round(i / totalPages * 100));
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(item => item.str).join(' ');
+    fullText += pageText + '\n';
+  }
+  return fullText;
+}
+
+function extractTextFromTxt(file) {
+  return file.text();
+}
+
+async function extractTextFromDocx(file) {
+  // Simple DOCX text extraction: DOCX is a zip containing XML
+  // We'll read the document.xml from the zip
+  const arrayBuffer = await file.arrayBuffer();
+  const uint8 = new Uint8Array(arrayBuffer);
+
+  // Find PK zip entries, locate word/document.xml
+  // Simple approach: convert to string and extract text between XML tags
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const raw = decoder.decode(uint8);
+
+  // Find the document.xml content between <w:t> tags
+  const texts = [];
+  const regex = /<w:t[^>]*>([^<]*)<\/w:t>/g;
+  let m;
+  while ((m = regex.exec(raw)) !== null) {
+    texts.push(m[1]);
+  }
+
+  if (texts.length > 0) return texts.join(' ');
+
+  // Fallback: just extract readable text
+  const fallback = raw.replace(/<[^>]+>/g, ' ').replace(/[^\x20-\x7E\n]/g, ' ').replace(/\s+/g, ' ');
+  return fallback;
+}
+
+async function handleFiles(files) {
+  for (const file of files) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const paperName = file.name.replace(/\.[^.]+$/, '');
+    let text = '';
+
+    try {
+      if (ext === 'pdf') {
+        if (!window.pdfjsLib) {
+          alert('PDF.jsの読み込みに失敗しました。ネット接続を確認してください。');
+          continue;
+        }
+        showProgress('PDF読み込み中...', 10);
+        text = await extractTextFromPDF(file);
+      } else if (ext === 'txt' || ext === 'text') {
+        showProgress('テキスト読み込み中...', 50);
+        text = await extractTextFromTxt(file);
+      } else if (ext === 'docx' || ext === 'doc') {
+        showProgress('DOCX読み込み中...', 50);
+        text = await extractTextFromDocx(file);
+      } else {
+        alert(`未対応の形式: .${ext}\nPDF, TXT, DOCXに対応しています。`);
+        continue;
+      }
+
+      if (!text || text.trim().length < 20) {
+        alert(`${file.name}: テキストを抽出できませんでした。`);
+        hideProgress();
+        continue;
+      }
+
+      showProgress('単語を解析中...', 90);
+      const result = importText(text, paperName);
+      renderPaperHistory();
+      alert(`${paperName}\n\n新規単語: ${result.addedCount}\n総抽出語: ${result.totalWords}\n文: ${result.sentenceCount}`);
+      // Auto-lookup meanings in background
+      const needLookup = Object.keys(APP.words).filter(w => !APP.words[w].meaning);
+      if (needLookup.length > 0) {
+        showProgress(`意味を自動検索中... (${needLookup.length}語)`, 95);
+        const filled = await batchLookup(needLookup);
+        showProgress(`${filled}語の意味を取得しました`, 100);
+        setTimeout(hideProgress, 2000);
+      } else {
+        hideProgress();
+      }
+
+    } catch (err) {
+      hideProgress();
+      console.error(err);
+      alert(`${file.name} の読み込みに失敗しました:\n${err.message}`);
+    }
+  }
+}
+
+// Drop zone
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) handleFiles(e.target.files);
+  e.target.value = '';
+});
+
+// Text paste fallback
+document.getElementById('btnImport').addEventListener('click', () => {
+  const text = document.getElementById('importText').value.trim();
+  if (!text) return;
+  const paperName = `Paper ${APP.papers.length + 1} (${new Date().toLocaleDateString('ja-JP')})`;
+  const result = importText(text, paperName);
+  document.getElementById('importText').value = '';
+  renderPaperHistory();
+  alert(`解析完了!\n新規単語: ${result.addedCount}\n総抽出語: ${result.totalWords}\n文: ${result.sentenceCount}`);
+  // Background: auto-lookup meanings
+  const needLookup = Object.keys(APP.words).filter(w => !APP.words[w].meaning);
+  if (needLookup.length > 0) {
+    batchLookup(needLookup).then(n => { if (n > 0) showProgress(`${n}語の意味を自動取得しました`, 100); setTimeout(hideProgress, 2000); });
+  }
+});
+
+function renderPaperHistory() {
+  const el = document.getElementById('importedPapers');
+  if (APP.papers.length === 0) { el.innerHTML = ''; return; }
+  el.innerHTML = '<h3 style="font-size:16px;margin-bottom:8px;">取り込み済み</h3>' +
+    APP.papers.map(p => `
+      <div class="word-card">
+        <div class="word-info">
+          <div class="word-text">${p.name}</div>
+          <div class="word-count">単語 ${p.wordCount} | 文 ${p.sentenceCount}</div>
+        </div>
+      </div>
+    `).join('');
+}
+
+// ============ VOCABULARY PAGE ============
+let vocabFilter = 'all';
+let vocabLevelFilter = 'all';
+let vocabSearch = '';
+
+function renderVocab() {
+  const words = Object.values(APP.words)
+    .filter(w => vocabFilter === 'all' || w.status === vocabFilter)
+    .filter(w => vocabLevelFilter === 'all' || String(w.level || 1) === vocabLevelFilter)
+    .filter(w => !vocabSearch || w.word.includes(vocabSearch.toLowerCase()) || (w.meaning && w.meaning.includes(vocabSearch)))
+    .sort((a, b) => (b.level || 1) - (a.level || 1) || b.count - a.count);
+
+  // Stats
+  const all = Object.values(APP.words);
+  document.getElementById('vocabStats').innerHTML = `
+    <div class="stat-chip"><strong>${all.length}</strong>総数</div>
+    <div class="stat-chip" style="color:var(--primary);"><strong>${all.filter(w=>(w.level||1)===1).length}</strong>Inter</div>
+    <div class="stat-chip" style="color:var(--warn);"><strong>${all.filter(w=>w.level===2).length}</strong>Adv</div>
+    <div class="stat-chip" style="color:var(--danger);"><strong>${all.filter(w=>w.level===3).length}</strong>Expert</div>
+  `;
+
+  const list = document.getElementById('wordList');
+  const empty = document.getElementById('vocabEmpty');
+
+  if (words.length === 0) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  list.innerHTML = words.map(w => {
+    const lv = w.level || 1;
+    const lvLabel = difficultyLabel(lv);
+    const lvColor = difficultyColor(lv);
+    const exSentence = w.sentences && w.sentences[0]
+      ? highlightWord(w.sentences[0].length > 120 ? w.sentences[0].slice(0, 120) + '...' : w.sentences[0], w.word)
+      : '';
+    return `
+    <div class="word-card" style="flex-direction:column;align-items:stretch;gap:4px;" data-word="${w.word}">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn-speak btn-speak-list" data-speak="${w.word}" title="読み上げ" style="margin-right:2px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+        </button>
+        <div class="word-info" style="flex:1;min-width:0;">
+          <div class="word-text">${w.word} <span style="font-size:10px;color:${lvColor};font-weight:700;margin-left:4px;">${lvLabel}</span></div>
+          <div class="word-count">${w.meaning || '(意味未設定)'} | ${w.count}回出現</div>
+        </div>
+        <span class="word-status status-${w.status}">${
+          w.status === 'new' ? 'New' : w.status === 'learning' ? '学習中' : '習得済'
+        }</span>
+      </div>
+      ${exSentence ? `<div style="font-size:12px;color:var(--text3);line-height:1.5;padding-left:46px;overflow:hidden;text-overflow:ellipsis;">${exSentence}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.btn-speak-list').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      speak(btn.dataset.speak);
+    });
+  });
+
+  list.querySelectorAll('.word-card').forEach(card => {
+    card.addEventListener('click', () => openWordModal(card.dataset.word));
+  });
+}
+
+document.getElementById('vocabSearch').addEventListener('input', e => {
+  vocabSearch = e.target.value;
+  renderVocab();
+});
+
+document.getElementById('vocabFilter').addEventListener('click', e => {
+  if (!e.target.classList.contains('filter-chip')) return;
+  document.querySelectorAll('#vocabFilter .filter-chip').forEach(c => c.classList.remove('active'));
+  e.target.classList.add('active');
+  vocabFilter = e.target.dataset.filter;
+  renderVocab();
+});
+
+document.getElementById('levelFilter').addEventListener('click', e => {
+  if (!e.target.classList.contains('filter-chip')) return;
+  document.querySelectorAll('#levelFilter .filter-chip').forEach(c => c.classList.remove('active'));
+  e.target.classList.add('active');
+  vocabLevelFilter = e.target.dataset.level;
+  renderVocab();
+});
+
+// ============ WORD MODAL ============
+let currentModalWord = null;
+
+function openWordModal(word) {
+  currentModalWord = word;
+  const w = APP.words[word];
+  document.getElementById('modalWord').textContent = w.word;
+  document.getElementById('modalMeaning').value = w.meaning || '';
+  document.getElementById('modalStatus').value = w.status;
+  document.getElementById('modalPhonetic').textContent = '';
+  document.getElementById('modalDefEnglish').style.display = 'none';
+  document.getElementById('modalDefEnglish').innerHTML = '';
+  document.getElementById('modalLookupStatus').textContent = '';
+  document.getElementById('modalSentences').innerHTML = w.sentences
+    .map(s => `<p style="margin-bottom:8px;">${highlightWord(s, word)}</p>`).join('');
+  document.getElementById('wordModal').classList.add('show');
+  // Auto-lookup if meaning is empty
+  if (!w.meaning) lookupAndFill(word);
+}
+
+function highlightWord(sentence, word) {
+  const regex = new RegExp(`\\b(${word})\\b`, 'gi');
+  return sentence.replace(regex, '<strong style="color:var(--primary);">$1</strong>');
+}
+
+// ============ DICTIONARY LOOKUP ============
+// Free Dictionary API (English definitions) + simple translation map
+async function lookupWord(word) {
+  const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const entry = data[0];
+  const phonetic = entry.phonetic || (entry.phonetics && entry.phonetics.find(p => p.text))?.text || '';
+  const meanings = [];
+  for (const m of entry.meanings || []) {
+    const pos = m.partOfSpeech || '';
+    for (const d of (m.definitions || []).slice(0, 2)) {
+      meanings.push({ pos, def: d.definition, example: d.example || '' });
+    }
+  }
+  return { word: entry.word, phonetic, meanings };
+}
+
+// Sci-term Japanese glossary (common terms in marine/coral/chemistry papers)
+const SCI_JA_GLOSSARY = {
+  calcification: '石灰化', alkalinity: 'アルカリ度', photosynthesis: '光合成',
+  respiration: '呼吸', dissolution: '溶解', precipitation: '沈殿/降水',
+  supersaturation: '過飽和', undersaturation: '不飽和', carbonate: '炭酸塩',
+  bicarbonate: '重炭酸塩', aragonite: 'アラゴナイト', calcite: 'カルサイト',
+  coral: 'サンゴ', symbiont: '共生体', zooxanthellae: '褐虫藻',
+  polyamine: 'ポリアミン', putrescine: 'プトレシン', spermidine: 'スペルミジン',
+  spermine: 'スペルミン', enzyme: '酵素', substrate: '基質',
+  metabolite: '代謝産物', metabolism: '代謝', catabolism: '異化',
+  anabolism: '同化', protein: 'タンパク質', nucleotide: 'ヌクレオチド',
+  chromosome: '染色体', genome: 'ゲノム', transcription: '転写',
+  translation: '翻訳', replication: '複製', mutation: '変異',
+  phenotype: '表現型', genotype: '遺伝子型', allele: '対立遺伝子',
+  concentration: '濃度', saturation: '飽和', equilibrium: '平衡',
+  stoichiometry: '化学量論', titration: '滴定', spectroscopy: '分光法',
+  chromatography: 'クロマトグラフィー', centrifugation: '遠心分離',
+  incubation: '培養/インキュベーション', homogenate: 'ホモジネート',
+  supernatant: '上清', pellet: 'ペレット/沈殿', aliquot: 'アリコート',
+  absorbance: '吸光度', fluorescence: '蛍光', wavelength: '波長',
+  conductivity: '伝導率', salinity: '塩分', temperature: '温度',
+  acidification: '酸性化', eutrophication: '富栄養化', hypoxia: '低酸素',
+  biogeochemical: '生物地球化学的', ecosystem: '生態系',
+  biodiversity: '生物多様性', biomass: 'バイオマス', productivity: '生産性',
+  chlorophyll: 'クロロフィル', carotenoid: 'カロテノイド',
+  mitochondria: 'ミトコンドリア', endoplasmic: '小胞体の',
+  phosphorylation: 'リン酸化', glycolysis: '解糖系', oxidation: '酸化',
+  reduction: '還元', hydrolysis: '加水分解', dehydration: '脱水',
+  polymerization: '重合', crystallization: '結晶化', mineralization: '鉱化',
+  diagenesis: '続成作用', sedimentation: '堆積', stratification: '成層',
+  upwelling: '湧昇', thermocline: '水温躍層', halocline: '塩分躍層',
+  pycnocline: '密度躍層', isotope: '同位体', fractionation: '分別',
+  speciation: '化学種分化', chelation: 'キレート化', adsorption: '吸着',
+  desorption: '脱着', diffusion: '拡散', osmosis: '浸透',
+  permeability: '透過性', viscosity: '粘性', turbidity: '濁度',
+  morphology: '形態学', histology: '組織学', cytology: '細胞学',
+  phylogeny: '系統発生', ontogeny: '個体発生', symbiosis: '共生',
+  parasitism: '寄生', mutualism: '相利共生', commensalism: '片利共生',
+  herbivory: '植食', predation: '捕食', competition: '競争',
+  recruitment: '加入', mortality: '死亡率', fecundity: '繁殖力',
+  larvae: '幼生', metamorphosis: '変態', acclimatization: '馴化',
+  bleaching: '白化', necrosis: '壊死', apoptosis: 'アポトーシス',
+  proliferation: '増殖', differentiation: '分化', regeneration: '再生',
+  amplitude: '振幅', frequency: '周波数/頻度', variance: '分散',
+  covariance: '共分散', regression: '回帰', correlation: '相関',
+  significance: '有意性', reproducibility: '再現性', variability: '変動性',
+  heterogeneity: '不均一性', homogeneity: '均一性', anisotropy: '異方性',
+};
+
+async function lookupAndFill(word) {
+  const statusEl = document.getElementById('modalLookupStatus');
+  const meaningEl = document.getElementById('modalMeaning');
+  const phoneticEl = document.getElementById('modalPhonetic');
+  const defEl = document.getElementById('modalDefEnglish');
+
+  statusEl.textContent = '検索中...';
+  statusEl.style.color = 'var(--primary)';
+
+  // Check glossary first
+  const glossaryHit = SCI_JA_GLOSSARY[word];
+
+  try {
+    const result = await lookupWord(word);
+    if (result) {
+      // Show phonetic
+      if (result.phonetic) phoneticEl.textContent = result.phonetic;
+
+      // Show English definitions
+      if (result.meanings.length > 0) {
+        defEl.style.display = 'block';
+        defEl.innerHTML = result.meanings.slice(0, 3).map(m =>
+          `<div style="margin-bottom:6px;"><span style="color:var(--primary);font-size:12px;font-weight:600;">${m.pos}</span> ${m.def}${m.example ? `<br><span style="color:var(--text3);font-style:italic;">"${m.example}"</span>` : ''}</div>`
+        ).join('');
+      }
+
+      // Auto-fill Japanese meaning
+      if (!meaningEl.value) {
+        if (glossaryHit) {
+          meaningEl.value = glossaryHit;
+        } else {
+          // Use first English definition as fallback
+          meaningEl.value = result.meanings[0]?.def || '';
+        }
+      }
+      statusEl.textContent = '検索完了';
+      statusEl.style.color = 'var(--accent)';
+    } else {
+      // API miss — use glossary if available
+      if (glossaryHit && !meaningEl.value) meaningEl.value = glossaryHit;
+      statusEl.textContent = glossaryHit ? '用語集から取得' : '辞書に見つかりません';
+      statusEl.style.color = glossaryHit ? 'var(--accent)' : 'var(--warn)';
+    }
+  } catch (e) {
+    if (glossaryHit && !meaningEl.value) meaningEl.value = glossaryHit;
+    statusEl.textContent = glossaryHit ? '用語集から取得 (オフライン)' : 'ネットワークエラー';
+    statusEl.style.color = glossaryHit ? 'var(--accent)' : 'var(--danger)';
+  }
+}
+
+// Batch lookup for import (background, throttled)
+async function batchLookup(words) {
+  const BATCH_SIZE = 5;
+  const DELAY = 300;
+  let filled = 0;
+  for (let i = 0; i < words.length; i += BATCH_SIZE) {
+    const batch = words.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (word) => {
+      if (APP.words[word] && APP.words[word].meaning) return;
+      // Glossary first
+      if (SCI_JA_GLOSSARY[word]) {
+        APP.words[word].meaning = SCI_JA_GLOSSARY[word];
+        filled++;
+        return;
+      }
+      try {
+        const result = await lookupWord(word);
+        if (result && result.meanings.length > 0 && APP.words[word]) {
+          APP.words[word].meaning = result.meanings[0].def;
+          filled++;
+        }
+      } catch (e) { /* skip */ }
+    }));
+    if (i + BATCH_SIZE < words.length) {
+      await new Promise(r => setTimeout(r, DELAY));
+    }
+  }
+  if (filled > 0) saveData(APP);
+  return filled;
+}
+
+document.getElementById('modalSpeak').addEventListener('click', () => {
+  if (currentModalWord) speak(currentModalWord);
+});
+
+document.getElementById('modalLookup').addEventListener('click', () => {
+  if (currentModalWord) lookupAndFill(currentModalWord);
+});
+
+document.getElementById('modalSave').addEventListener('click', () => {
+  if (!currentModalWord) return;
+  APP.words[currentModalWord].meaning = document.getElementById('modalMeaning').value.trim();
+  APP.words[currentModalWord].status = document.getElementById('modalStatus').value;
+  saveData(APP);
+  document.getElementById('wordModal').classList.remove('show');
+  renderVocab();
+});
+
+document.getElementById('modalClose').addEventListener('click', () => {
+  document.getElementById('wordModal').classList.remove('show');
+});
+
+document.getElementById('modalDelete').addEventListener('click', () => {
+  if (!currentModalWord) return;
+  if (!confirm(`"${currentModalWord}" を削除しますか？`)) return;
+  delete APP.words[currentModalWord];
+  saveData(APP);
+  document.getElementById('wordModal').classList.remove('show');
+  renderVocab();
+});
+
+document.getElementById('wordModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('wordModal')) {
+    document.getElementById('wordModal').classList.remove('show');
+  }
+});
+
+// ============ FLASHCARDS ============
+let flashDeck = [];
+let flashIndex = 0;
+let flashMode = 'en-ja';
+let flashLevelFilter = 'all';
+let isFlipped = false;
+
+document.getElementById('flashLevelFilter').addEventListener('click', e => {
+  if (!e.target.classList.contains('filter-chip')) return;
+  document.querySelectorAll('#flashLevelFilter .filter-chip').forEach(c => c.classList.remove('active'));
+  e.target.classList.add('active');
+  flashLevelFilter = e.target.dataset.level;
+  initFlashcards();
+});
+
+function initFlashcards() {
+  const target = APP.settings.flashTarget || 'new-learning';
+  const allWords = Object.values(APP.words).filter(w => {
+    let ok = true;
+    if (target === 'new') ok = w.status === 'new';
+    else if (target === 'learning') ok = w.status === 'learning';
+    else if (target !== 'all') ok = w.status === 'new' || w.status === 'learning';
+    if (flashLevelFilter !== 'all') ok = ok && String(w.level || 1) === flashLevelFilter;
+    return ok;
+  });
+
+  if (allWords.length === 0) {
+    document.getElementById('flashContainer').style.display = 'none';
+    document.getElementById('flashEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('flashContainer').style.display = 'flex';
+  document.getElementById('flashEmpty').style.display = 'none';
+
+  // Shuffle
+  flashDeck = allWords.sort(() => Math.random() - 0.5);
+  const sessionSize = APP.settings.sessionSize || 20;
+  if (sessionSize > 0) flashDeck = flashDeck.slice(0, sessionSize);
+  flashIndex = 0;
+  isFlipped = false;
+  showFlashcard();
+}
+
+function showFlashcard() {
+  if (flashIndex >= flashDeck.length) {
+    document.getElementById('flashWord').textContent = 'Complete!';
+    document.getElementById('flashHint').textContent = `${flashDeck.length}語を復習しました`;
+    document.getElementById('flashMeaning').classList.remove('show');
+    document.getElementById('flashSentence').classList.remove('show');
+    document.getElementById('flashProgress').textContent = `${flashDeck.length} / ${flashDeck.length}`;
+    return;
+  }
+  const w = flashDeck[flashIndex];
+  isFlipped = false;
+
+  const lv = w.level || 1;
+  const lvTag = ` <span style="font-size:12px;color:${difficultyColor(lv)};font-weight:700;">${difficultyLabel(lv)}</span>`;
+  if (flashMode === 'en-ja') {
+    document.getElementById('flashWord').innerHTML = w.word + lvTag;
+    document.getElementById('flashHint').textContent = 'タップで意味を表示';
+    document.getElementById('flashMeaning').textContent = w.meaning || '(意味未設定)';
+  } else {
+    document.getElementById('flashWord').innerHTML = (w.meaning || '(意味未設定)') + lvTag;
+    document.getElementById('flashHint').textContent = 'タップで英単語を表示';
+    document.getElementById('flashMeaning').textContent = w.word;
+  }
+  document.getElementById('flashMeaning').classList.remove('show');
+  document.getElementById('flashSentence').textContent = w.sentences[0] || '';
+  document.getElementById('flashSentence').classList.remove('show');
+  document.getElementById('flashSpeakSentence').style.display = 'none';
+  document.getElementById('flashProgress').textContent = `${flashIndex + 1} / ${flashDeck.length}`;
+}
+
+document.getElementById('flashSpeak').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (flashIndex >= flashDeck.length) return;
+  const w = flashDeck[flashIndex];
+  speak(w.word);
+});
+
+document.getElementById('flashSpeakSentence').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (flashIndex >= flashDeck.length) return;
+  const w = flashDeck[flashIndex];
+  if (w.sentences[0]) speak(w.sentences[0]);
+});
+
+document.getElementById('flashcard').addEventListener('click', () => {
+  if (flashIndex >= flashDeck.length) return;
+  isFlipped = true;
+  document.getElementById('flashMeaning').classList.add('show');
+  document.getElementById('flashSentence').classList.add('show');
+  document.getElementById('flashSpeakSentence').style.display = 'inline-flex';
+  document.getElementById('flashHint').textContent = '';
+});
+
+document.getElementById('btnFlip').addEventListener('click', () => {
+  document.getElementById('flashcard').click();
+});
+
+document.getElementById('btnHard').addEventListener('click', () => {
+  if (flashIndex >= flashDeck.length) return;
+  const w = flashDeck[flashIndex];
+  APP.words[w.word].status = 'learning';
+  saveData(APP);
+  // Put it back later in the deck
+  if (flashIndex < flashDeck.length - 2) {
+    const pos = flashIndex + 3 + Math.floor(Math.random() * 3);
+    flashDeck.splice(Math.min(pos, flashDeck.length), 0, w);
+  }
+  flashIndex++;
+  showFlashcard();
+});
+
+document.getElementById('btnEasy').addEventListener('click', () => {
+  if (flashIndex >= flashDeck.length) return;
+  const w = flashDeck[flashIndex];
+  APP.words[w.word].status = 'known';
+  saveData(APP);
+  flashIndex++;
+  showFlashcard();
+});
+
+document.getElementById('flashMode').addEventListener('click', e => {
+  if (!e.target.classList.contains('tab-btn')) return;
+  document.querySelectorAll('#flashMode .tab-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  flashMode = e.target.dataset.mode;
+  initFlashcards();
+});
+
+// ============ EXERCISES ============
+let exerciseType = 'fill';
+let currentExercise = null;
+
+function renderExercise() {
+  if (APP.sentences.length < 3) {
+    document.getElementById('exerciseArea').innerHTML = '';
+    document.getElementById('exerciseEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('exerciseEmpty').style.display = 'none';
+  generateExercise();
+}
+
+function generateExercise() {
+  const area = document.getElementById('exerciseArea');
+
+  if (exerciseType === 'fill') {
+    generateFillExercise(area);
+  } else if (exerciseType === 'reorder') {
+    generateReorderExercise(area);
+  } else if (exerciseType === 'speak') {
+    generateSpeakExercise(area);
+  } else {
+    generateWriteExercise(area);
+  }
+}
+
+function getRandomSentence() {
+  const pool = APP.sentences.filter(s => {
+    const wordCount = s.split(/\s+/).length;
+    return wordCount >= 5 && wordCount <= 30;
+  });
+  if (pool.length === 0) return APP.sentences[Math.floor(Math.random() * APP.sentences.length)];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function generateFillExercise(area) {
+  const sentence = getRandomSentence();
+  const words = sentence.match(/[a-zA-Z][-a-zA-Z]{2,}/g) || [];
+  // Pick a target word (prefer words in vocabulary)
+  const vocabWords = words.filter(w => APP.words[w.toLowerCase()]);
+  const targetWords = vocabWords.length > 0 ? vocabWords : words.filter(w => !STOP_WORDS.has(w.toLowerCase()));
+  if (targetWords.length === 0) { generateFillExercise(area); return; }
+  const target = targetWords[Math.floor(Math.random() * targetWords.length)];
+  const display = sentence.replace(new RegExp(`\\b${target}\\b`, 'i'), '<span class="blank">?</span>');
+
+  currentExercise = { type: 'fill', answer: target.toLowerCase(), sentence };
+
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type">穴埋め問題</div>
+      <div class="exercise-prompt">${display}</div>
+      <input class="exercise-input" id="exInput" placeholder="空欄に入る単語を入力..." autocapitalize="none" autocorrect="off">
+      <div class="exercise-feedback" id="exFeedback"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-primary btn-block btn-sm" id="exCheck">回答する</button>
+        <button class="btn btn-secondary btn-sm" id="exSkip">スキップ</button>
+      </div>
+    </div>
+    <button class="btn btn-secondary btn-block btn-sm mt" id="exNext">次の問題</button>
+  `;
+  setupExerciseListeners();
+}
+
+function generateReorderExercise(area) {
+  const sentence = getRandomSentence();
+  const words = sentence.replace(/[.!?,;:]+/g, '').split(/\s+/).filter(Boolean);
+  if (words.length > 15) { generateReorderExercise(area); return; }
+  const shuffled = [...words].sort(() => Math.random() - 0.5);
+
+  currentExercise = { type: 'reorder', answer: words, sentence, selected: [] };
+
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type">並べ替え問題</div>
+      <p style="font-size:13px;color:var(--text3);margin-bottom:12px;">単語をタップして正しい順序に並べ替えてください</p>
+      <div class="answer-zone" id="answerZone"></div>
+      <div class="word-chips" id="wordChips">
+        ${shuffled.map((w, i) => `<span class="word-chip" data-idx="${i}" data-word="${w}">${w}</span>`).join('')}
+      </div>
+      <div class="exercise-feedback" id="exFeedback"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-primary btn-block btn-sm" id="exCheck">回答する</button>
+        <button class="btn btn-secondary btn-sm" id="exSkip">スキップ</button>
+      </div>
+    </div>
+    <button class="btn btn-secondary btn-block btn-sm mt" id="exNext">次の問題</button>
+  `;
+
+  // Chip click handlers
+  const chips = area.querySelectorAll('.word-chip');
+  const answerZone = document.getElementById('answerZone');
+
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      if (chip.classList.contains('selected')) {
+        chip.classList.remove('selected');
+        const inZone = answerZone.querySelector(`[data-src="${chip.dataset.idx}"]`);
+        if (inZone) inZone.remove();
+        currentExercise.selected = currentExercise.selected.filter(s => s.idx !== chip.dataset.idx);
+      } else {
+        chip.classList.add('selected');
+        const clone = document.createElement('span');
+        clone.className = 'word-chip';
+        clone.textContent = chip.dataset.word;
+        clone.dataset.src = chip.dataset.idx;
+        clone.addEventListener('click', () => {
+          chip.classList.remove('selected');
+          clone.remove();
+          currentExercise.selected = currentExercise.selected.filter(s => s.idx !== chip.dataset.idx);
+        });
+        answerZone.appendChild(clone);
+        currentExercise.selected.push({ idx: chip.dataset.idx, word: chip.dataset.word });
+      }
+    });
+  });
+
+  setupExerciseListeners();
+}
+
+// Simple English-to-Japanese translation map for scientific terms
+// (lightweight client-side heuristic — not a full translator)
+function pseudoTranslate(sentence) {
+  // Replace scientific terms with known patterns, keep structure hints
+  let jp = sentence;
+  // Common scientific phrase patterns
+  const replacements = [
+    [/\bwas measured\b/gi, 'が測定された'],
+    [/\bwere measured\b/gi, 'が測定された'],
+    [/\bwas observed\b/gi, 'が観察された'],
+    [/\bwere observed\b/gi, 'が観察された'],
+    [/\bwas determined\b/gi, 'が決定された'],
+    [/\bwas calculated\b/gi, 'が算出された'],
+    [/\bwas found\b/gi, 'が見出された'],
+    [/\bincreased significantly\b/gi, '有意に増加した'],
+    [/\bdecreased significantly\b/gi, '有意に減少した'],
+    [/\bin contrast to\b/gi, '〜とは対照的に'],
+    [/\bin addition to\b/gi, '〜に加えて'],
+    [/\bas a result\b/gi, 'その結果'],
+    [/\bon the other hand\b/gi, '一方'],
+    [/\bfor example\b/gi, '例えば'],
+    [/\bcompared with\b/gi, '〜と比較して'],
+    [/\bcompared to\b/gi, '〜と比較して'],
+    [/\bsuggests that\b/gi, '〜であることを示唆する'],
+    [/\bsuggested that\b/gi, '〜であることが示唆された'],
+    [/\bindicates that\b/gi, '〜であることを示す'],
+    [/\bindicated that\b/gi, '〜であることが示された'],
+    [/\bplays? an? important role\b/gi, '重要な役割を果たす'],
+    [/\bunder conditions? of\b/gi, '〜の条件下で'],
+    [/\bthe relationship between\b/gi, '〜間の関係'],
+    [/\bcorrelated with\b/gi, '〜と相関した'],
+    [/\bresponsible for\b/gi, '〜に関与する'],
+    [/\bdependent on\b/gi, '〜に依存する'],
+    [/\bconsistent with\b/gi, '〜と一致する'],
+    [/\bcontributes? to\b/gi, '〜に寄与する'],
+    [/\bresulted in\b/gi, '〜をもたらした'],
+    [/\bdue to\b/gi, '〜に起因して'],
+    [/\bthe effect of\b/gi, '〜の影響'],
+    [/\bthe influence of\b/gi, '〜の影響'],
+    [/\bthe mechanism of\b/gi, '〜のメカニズム'],
+    [/\bthe rate of\b/gi, '〜の速度'],
+    [/\bthe concentration of\b/gi, '〜の濃度'],
+    [/\bthe level of\b/gi, '〜のレベル'],
+  ];
+  for (const [re, rep] of replacements) {
+    jp = jp.replace(re, rep);
+  }
+  return jp;
+}
+
+function generateWriteExercise(area) {
+  const sentence = getRandomSentence();
+  const words = sentence.match(/[a-zA-Z][-a-zA-Z]{2,}/g) || [];
+  // Keywords: prefer words in the user's vocabulary list
+  const vocabKeys = words.filter(w => APP.words[w.toLowerCase()]);
+  const sciKeys = words.filter(w => !STOP_WORDS.has(w.toLowerCase()) && w.length >= 5);
+  const keywords = (vocabKeys.length >= 3 ? vocabKeys : sciKeys).slice(0, 5);
+
+  // Generate Japanese hint
+  const jaHint = pseudoTranslate(sentence);
+
+  currentExercise = { type: 'write', answer: sentence, keywords };
+
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type">日本語 → 英作文</div>
+      <div style="background:var(--bg);padding:12px 16px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-size:15px;line-height:1.6;color:var(--text);">${jaHint}</div>
+      </div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:8px;">ヒント: 以下のキーワードを使って英文にしてください</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
+        ${keywords.map(k => `<span style="background:var(--primary);color:#fff;padding:4px 12px;border-radius:12px;font-size:14px;">${k}</span>`).join('')}
+      </div>
+      <textarea class="exercise-input" id="exInput" rows="3" placeholder="英文を入力..."></textarea>
+      <div class="exercise-feedback" id="exFeedback"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-primary btn-block btn-sm" id="exCheck">回答する</button>
+        <button class="btn btn-secondary btn-sm" id="exSkip">答えを見る</button>
+      </div>
+    </div>
+    <button class="btn btn-secondary btn-block btn-sm mt" id="exNext">次の問題</button>
+  `;
+  setupExerciseListeners();
+}
+
+function generateSpeakExercise(area) {
+  const sentence = getRandomSentence();
+  currentExercise = { type: 'speak', answer: sentence };
+
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type">発音トレーニング</div>
+      <div class="exercise-prompt" id="speakTarget">${sentence}</div>
+      <div style="display:flex;gap:12px;justify-content:center;margin:16px 0;">
+        <button class="btn-speak" id="exListen" title="お手本を聞く" style="width:48px;height:48px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+        </button>
+        <button class="btn-mic" id="exMic" title="発音する">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="1" width="6" height="12" rx="3"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+      </div>
+      <p style="font-size:12px;color:var(--text3);text-align:center;">左: お手本 / 右: 録音して発音チェック</p>
+      <div id="pronunciationResult"></div>
+      <div class="exercise-feedback" id="exFeedback"></div>
+    </div>
+    <button class="btn btn-secondary btn-block btn-sm mt" id="exNext">次の問題</button>
+  `;
+
+  document.getElementById('exListen').addEventListener('click', () => {
+    speak(sentence);
+  });
+
+  document.getElementById('exMic').addEventListener('click', () => {
+    const micBtn = document.getElementById('exMic');
+    if (isRecording) {
+      stopRecognition();
+      micBtn.classList.remove('recording');
+      return;
+    }
+    micBtn.classList.add('recording');
+    const started = startRecognition(
+      (results) => {
+        const best = results[0];
+        const score = comparePronunciation(sentence, best.text);
+        const resultEl = document.getElementById('pronunciationResult');
+        const scoreClass = score >= 80 ? 'score-good' : score >= 50 ? 'score-ok' : 'score-bad';
+        const scoreLabel = score >= 80 ? 'Excellent!' : score >= 50 ? 'Good' : 'Try again';
+        resultEl.innerHTML = `
+          <div class="pronunciation-result">
+            <div class="pronunciation-score ${scoreClass}">${score}%</div>
+            <div style="font-size:14px;color:var(--text3);margin-top:4px;">${scoreLabel}</div>
+            <div class="recognized-text">
+              <strong>認識結果:</strong> ${best.text}
+            </div>
+          </div>
+        `;
+      },
+      () => { micBtn.classList.remove('recording'); }
+    );
+    if (!started) micBtn.classList.remove('recording');
+  });
+
+  document.getElementById('exNext').addEventListener('click', generateExercise);
+}
+
+function addReadAloudButton(containerSelector, text) {
+  const container = document.querySelector(containerSelector);
+  if (!container) return;
+  const btn = document.createElement('button');
+  btn.className = 'btn-speak';
+  btn.title = '読み上げ';
+  btn.style.marginTop = '8px';
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>';
+  btn.addEventListener('click', () => speak(text));
+  container.appendChild(btn);
+}
+
+function setupExerciseListeners() {
+  document.getElementById('exCheck').addEventListener('click', checkExercise);
+  document.getElementById('exSkip').addEventListener('click', skipExercise);
+  document.getElementById('exNext').addEventListener('click', generateExercise);
+
+  const input = document.getElementById('exInput');
+  if (input && input.tagName === 'INPUT') {
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') checkExercise(); });
+  }
+
+  // Add read-aloud to sentence in exercise feedback after check
+  if (currentExercise && currentExercise.sentence) {
+    addReadAloudButton('.exercise-box', currentExercise.sentence);
+  }
+}
+
+function checkExercise() {
+  const fb = document.getElementById('exFeedback');
+
+  if (currentExercise.type === 'fill') {
+    const answer = document.getElementById('exInput').value.trim().toLowerCase();
+    if (answer === currentExercise.answer) {
+      fb.className = 'exercise-feedback feedback-correct';
+      fb.textContent = '正解!';
+    } else {
+      fb.className = 'exercise-feedback feedback-incorrect';
+      fb.innerHTML = `不正解。正解: <strong>${currentExercise.answer}</strong>`;
+    }
+  } else if (currentExercise.type === 'reorder') {
+    const userAnswer = currentExercise.selected.map(s => s.word).join(' ').toLowerCase();
+    const correct = currentExercise.answer.join(' ').toLowerCase();
+    if (userAnswer === correct) {
+      fb.className = 'exercise-feedback feedback-correct';
+      fb.textContent = '正解!';
+    } else {
+      fb.className = 'exercise-feedback feedback-incorrect';
+      fb.innerHTML = `不正解。<br>正解: <strong>${currentExercise.answer.join(' ')}</strong>`;
+    }
+  } else {
+    const userText = document.getElementById('exInput').value.trim();
+    const usedKeywords = currentExercise.keywords.filter(k =>
+      userText.toLowerCase().includes(k.toLowerCase())
+    );
+    if (usedKeywords.length === currentExercise.keywords.length) {
+      fb.className = 'exercise-feedback feedback-correct';
+      fb.innerHTML = `全キーワード使用! <br><strong>元の文:</strong> ${currentExercise.answer}`;
+    } else {
+      fb.className = 'exercise-feedback feedback-incorrect';
+      fb.innerHTML = `キーワード ${usedKeywords.length}/${currentExercise.keywords.length} 使用<br>
+        <strong>元の文:</strong> ${currentExercise.answer}`;
+    }
+  }
+}
+
+function skipExercise() {
+  const fb = document.getElementById('exFeedback');
+  fb.className = 'exercise-feedback feedback-incorrect';
+  if (currentExercise.type === 'fill') {
+    fb.innerHTML = `正解: <strong>${currentExercise.answer}</strong><br><em>${currentExercise.sentence}</em>`;
+  } else if (currentExercise.type === 'reorder') {
+    fb.innerHTML = `正解: <strong>${currentExercise.answer.join(' ')}</strong>`;
+  } else {
+    fb.innerHTML = `元の文: <strong>${currentExercise.answer}</strong>`;
+  }
+}
+
+document.getElementById('exerciseMode').addEventListener('click', e => {
+  if (!e.target.classList.contains('tab-btn')) return;
+  document.querySelectorAll('#exerciseMode .tab-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  exerciseType = e.target.dataset.type;
+  generateExercise();
+});
+
+// ============ Q&A TRAINING ============
+let qaType = 'content';
+let currentQA = null;
+
+// Question templates by category
+const QA_TEMPLATES = {
+  content: [
+    { q: 'Could you explain what you mean by "{keyword}" in this context?',
+      hint: '"{keyword}"という用語の定義・意味を説明してください。' },
+    { q: 'What is the significance of your finding that {finding}?',
+      hint: 'この知見の科学的意義を説明してください。' },
+    { q: 'How does your result relate to {keyword}?',
+      hint: '{keyword}との関連を説明してください。' },
+    { q: 'Can you elaborate on the relationship between {kw1} and {kw2}?',
+      hint: '{kw1}と{kw2}の関係を詳しく説明してください。' },
+    { q: 'What was the main conclusion regarding {keyword}?',
+      hint: '{keyword}に関する主な結論を述べてください。' },
+    { q: 'You mentioned {finding}. Could you go into more detail?',
+      hint: 'この点についてもう少し詳しく説明してください。' },
+    { q: 'What is the biological/chemical mechanism behind {keyword}?',
+      hint: '{keyword}の生物学的/化学的メカニズムを説明してください。' },
+    { q: 'How do you interpret the result that {finding}?',
+      hint: 'この結果をどう解釈しますか？' },
+  ],
+  method: [
+    { q: 'Why did you choose this particular method for measuring {keyword}?',
+      hint: '{keyword}の測定にこの方法を選んだ理由を説明してください。' },
+    { q: 'What were the limitations of your experimental approach?',
+      hint: '実験アプローチの限界について説明してください。' },
+    { q: 'How many replicates did you use, and how did you ensure reproducibility?',
+      hint: '再現性の確保について説明してください。' },
+    { q: 'Did you consider using alternative methods such as {keyword}?',
+      hint: '代替手法の検討について答えてください。' },
+    { q: 'How did you control for potential confounding variables?',
+      hint: '交絡変数のコントロールについて説明してください。' },
+    { q: 'What was your sample size, and was it sufficient for statistical analysis?',
+      hint: 'サンプルサイズと統計的妥当性について答えてください。' },
+    { q: 'Could you describe your statistical analysis in more detail?',
+      hint: '統計解析の詳細を説明してください。' },
+    { q: 'What quality control measures did you implement?',
+      hint: '品質管理の方法を説明してください。' },
+  ],
+  critical: [
+    { q: 'How would you respond to the criticism that your results could be due to {keyword}?',
+      hint: '結果が{keyword}に起因する可能性への反論を述べてください。' },
+    { q: 'Your findings seem to contradict the work by other groups. How do you reconcile this?',
+      hint: '他のグループとの矛盾について説明してください。' },
+    { q: 'Isn\'t it possible that the observed effect is simply an artifact?',
+      hint: 'アーティファクトの可能性に対して反論してください。' },
+    { q: 'What would happen to your conclusions if the assumption about {keyword} were wrong?',
+      hint: '{keyword}の前提が間違っていた場合の影響を答えてください。' },
+    { q: 'How generalizable are your findings beyond this specific system?',
+      hint: '他のシステムへの一般化可能性について答えてください。' },
+    { q: 'Don\'t you think the correlation you observed could be coincidental?',
+      hint: '相関が偶然である可能性に対して反論してください。' },
+    { q: 'What is the weakest point of your study, in your opinion?',
+      hint: '研究の最も弱い点を正直に述べてください。' },
+    { q: 'How do you account for the variability in your data?',
+      hint: 'データのばらつきについて説明してください。' },
+  ],
+  general: [
+    { q: 'What are the practical implications of your research?',
+      hint: '研究の実用的意義を説明してください。' },
+    { q: 'What are your plans for future research in this area?',
+      hint: '今後の研究計画を述べてください。' },
+    { q: 'How does this work fit into the broader context of the field?',
+      hint: 'この分野全体の中での位置づけを説明してください。' },
+    { q: 'What was the most surprising finding in your study?',
+      hint: '最も意外だった発見について述べてください。' },
+    { q: 'If you could redo this study, what would you do differently?',
+      hint: 'やり直せるとしたら何を変えますか？' },
+    { q: 'What is the take-home message of your presentation?',
+      hint: '発表の最も重要なメッセージを一言で述べてください。' },
+    { q: 'How might this research impact future studies on {keyword}?',
+      hint: '{keyword}の今後の研究への影響を述べてください。' },
+    { q: 'Could you suggest potential applications of your findings?',
+      hint: '研究成果の応用可能性を提案してください。' },
+  ]
+};
+
+// Useful response phrases for the hint panel
+const RESPONSE_PHRASES = [
+  { en: 'Thank you for your question.', ja: 'ご質問ありがとうございます。' },
+  { en: 'That\'s an excellent point.', ja: '素晴らしいご指摘です。' },
+  { en: 'Let me clarify that.', ja: 'その点を明確にさせてください。' },
+  { en: 'As I mentioned earlier, ...', ja: '先ほど申し上げたように...' },
+  { en: 'Based on our data, we found that ...', ja: '我々のデータに基づくと...' },
+  { en: 'We actually considered that possibility, and ...', ja: 'その可能性は実際に検討しまして...' },
+  { en: 'That is a limitation of our study, however ...', ja: 'それは本研究の限界ですが、しかし...' },
+  { en: 'We are currently investigating that aspect.', ja: 'その点は現在調査中です。' },
+  { en: 'I think that\'s beyond the scope of this study, but ...', ja: 'それは本研究の範囲外ですが...' },
+  { en: 'To address your concern, ...', ja: 'ご懸念に対してお答えすると...' },
+  { en: 'The key evidence supporting this is ...', ja: 'これを支持する主な証拠は...' },
+  { en: 'We controlled for that by ...', ja: 'それについては〜でコントロールしました。' },
+];
+
+function getKeywordsFromPaper() {
+  return Object.values(APP.words)
+    .filter(w => w.level >= 2)
+    .sort((a, b) => b.count - a.count)
+    .map(w => w.word);
+}
+
+function getFindings() {
+  // Extract sentences that contain result-like patterns
+  const patterns = /\b(found|showed|demonstrated|revealed|observed|increased|decreased|correlated|significant|higher|lower)\b/i;
+  return APP.sentences.filter(s => patterns.test(s) && s.split(/\s+/).length <= 25);
+}
+
+function generateQuestion(type) {
+  const templates = QA_TEMPLATES[type] || QA_TEMPLATES.content;
+  const template = templates[Math.floor(Math.random() * templates.length)];
+  const keywords = getKeywordsFromPaper();
+  const findings = getFindings();
+
+  if (keywords.length === 0 && findings.length === 0) return null;
+
+  let q = template.q;
+  let hint = template.hint;
+
+  // Fill in placeholders
+  const kw = keywords.length > 0 ? keywords[Math.floor(Math.random() * Math.min(keywords.length, 10))] : 'this parameter';
+  const kw2 = keywords.length > 1 ? keywords.filter(k => k !== kw)[Math.floor(Math.random() * Math.min(keywords.length - 1, 10))] : 'the observed effect';
+  const finding = findings.length > 0
+    ? findings[Math.floor(Math.random() * findings.length)].replace(/^\s*\w/, c => c.toLowerCase())
+    : 'your main result';
+
+  q = q.replace('{keyword}', kw).replace('{kw1}', kw).replace('{kw2}', kw2).replace('{finding}', finding);
+  hint = hint.replace('{keyword}', kw).replace('{kw1}', kw).replace('{kw2}', kw2);
+
+  // Pick relevant reference sentence
+  const refSentence = findings.length > 0
+    ? findings[Math.floor(Math.random() * findings.length)]
+    : (APP.sentences.length > 0 ? APP.sentences[Math.floor(Math.random() * APP.sentences.length)] : '');
+
+  return { question: q, hint, reference: refSentence, type };
+}
+
+function renderQA() {
+  if (APP.sentences.length < 3) {
+    document.getElementById('qaArea').innerHTML = '';
+    document.getElementById('qaEmpty').style.display = 'block';
+    return;
+  }
+  document.getElementById('qaEmpty').style.display = 'none';
+  generateQAExercise();
+}
+
+function generateQAExercise() {
+  const area = document.getElementById('qaArea');
+  const qa = generateQuestion(qaType);
+  if (!qa) {
+    area.innerHTML = '<div class="empty-state"><p>質問を生成できません。<br>もう少し論文テキストを取り込んでください。</p></div>';
+    return;
+  }
+  currentQA = qa;
+
+  // Pick 3 random useful phrases
+  const shuffledPhrases = [...RESPONSE_PHRASES].sort(() => Math.random() - 0.5).slice(0, 4);
+
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type" style="color:var(--danger);">
+        ${qa.type === 'content' ? 'Content Question' : qa.type === 'method' ? 'Methodology' : qa.type === 'critical' ? 'Critical Question' : 'General Question'}
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
+        <div style="font-size:17px;line-height:1.6;font-weight:600;flex:1;">"${qa.question}"</div>
+        <button class="btn-speak" id="qaSpeak" title="質問を読み上げ">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+        </button>
+      </div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:16px;">${qa.hint}</div>
+
+      <details style="margin-bottom:12px;">
+        <summary style="cursor:pointer;font-size:13px;color:var(--primary);font-weight:600;">回答に使えるフレーズ</summary>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+          ${shuffledPhrases.map(p => `
+            <div style="display:flex;align-items:center;gap:8px;background:var(--bg);padding:8px 12px;border-radius:8px;">
+              <button class="btn-speak phrase-speak" data-text="${p.en}" style="width:28px;height:28px;flex-shrink:0;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+              </button>
+              <div>
+                <div style="font-size:14px;color:var(--text);">${p.en}</div>
+                <div style="font-size:12px;color:var(--text3);">${p.ja}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+
+      <textarea class="exercise-input" id="qaInput" rows="4" placeholder="英語で回答を入力...&#10;またはマイクボタンで音声入力"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <button class="btn-mic" id="qaMic" title="音声で回答" style="width:44px;height:44px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:22px;height:22px;"><rect x="9" y="1" width="6" height="12" rx="3"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <button class="btn btn-primary btn-block btn-sm" id="qaCheck">回答を確認</button>
+      </div>
+      <div id="qaFeedback" style="margin-top:12px;"></div>
+    </div>
+
+    <details class="mt" style="color:var(--text2);">
+      <summary style="cursor:pointer;font-size:13px;">参考: 論文中の関連文</summary>
+      <div style="margin-top:8px;padding:12px;background:var(--surface);border-radius:8px;font-size:14px;line-height:1.6;">
+        ${qa.reference}
+      </div>
+    </details>
+
+    <button class="btn btn-secondary btn-block btn-sm mt2" id="qaNext">次の質問</button>
+  `;
+
+  // Event listeners
+  document.getElementById('qaSpeak').addEventListener('click', () => speak(qa.question));
+
+  area.querySelectorAll('.phrase-speak').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      speak(btn.dataset.text);
+    });
+  });
+
+  document.getElementById('qaMic').addEventListener('click', () => {
+    const micBtn = document.getElementById('qaMic');
+    if (isRecording) { stopRecognition(); micBtn.classList.remove('recording'); return; }
+    micBtn.classList.add('recording');
+    startRecognition(
+      (results) => {
+        const text = results[0].text;
+        document.getElementById('qaInput').value = (document.getElementById('qaInput').value + ' ' + text).trim();
+      },
+      () => micBtn.classList.remove('recording')
+    );
+  });
+
+  document.getElementById('qaCheck').addEventListener('click', () => {
+    const answer = document.getElementById('qaInput').value.trim();
+    const fb = document.getElementById('qaFeedback');
+    if (!answer) { fb.innerHTML = '<div style="color:var(--warn);font-size:14px;">回答を入力してください</div>'; return; }
+
+    // Evaluate answer
+    const words = answer.split(/\s+/);
+    const wordCount = words.length;
+    const hasKeyword = getKeywordsFromPaper().some(k => answer.toLowerCase().includes(k));
+    const sentenceCount = (answer.match(/[.!?]+/g) || []).length;
+
+    let score = 0;
+    let feedback = [];
+
+    // Length check
+    if (wordCount >= 30) { score += 3; feedback.push('十分な長さの回答です'); }
+    else if (wordCount >= 15) { score += 2; feedback.push('もう少し詳しく回答するとベター'); }
+    else { score += 1; feedback.push('回答が短すぎます。具体的に説明しましょう'); }
+
+    // Uses scientific vocabulary
+    if (hasKeyword) { score += 2; feedback.push('専門用語を使えています'); }
+    else { feedback.push('論文のキーワードを使って具体的に答えましょう'); }
+
+    // Has structure (multiple sentences)
+    if (sentenceCount >= 2) { score += 1; feedback.push('複数文で構成されています'); }
+    else { feedback.push('2文以上で構成すると説得力が増します'); }
+
+    // Polite opening
+    const hasOpener = /^(thank|that'?s|well|yes|actually|let me|i think|based on|we found|our data|to address|as i)/i.test(answer);
+    if (hasOpener) { score += 1; feedback.push('丁寧な導入ができています'); }
+    else { feedback.push('"Thank you for your question." など導入フレーズを使いましょう'); }
+
+    const maxScore = 7;
+    const pct = Math.round(score / maxScore * 100);
+    const scoreClass = pct >= 70 ? 'score-good' : pct >= 40 ? 'score-ok' : 'score-bad';
+
+    fb.innerHTML = `
+      <div class="pronunciation-result">
+        <div class="pronunciation-score ${scoreClass}">${pct}%</div>
+        <div style="font-size:13px;color:var(--text3);margin-top:4px;">回答評価</div>
+        <div style="text-align:left;margin-top:12px;">
+          ${feedback.map(f => `<div style="font-size:13px;color:var(--text2);padding:4px 0;">・${f}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  });
+
+  document.getElementById('qaNext').addEventListener('click', generateQAExercise);
+}
+
+document.getElementById('qaMode').addEventListener('click', e => {
+  if (!e.target.classList.contains('tab-btn')) return;
+  document.querySelectorAll('#qaMode .tab-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  qaType = e.target.dataset.qtype;
+  generateQAExercise();
+});
+
+// ============ PHRASES TRAINING ============
+const PHRASES_DB = {
+  presentation: [
+    { en: 'Good morning/afternoon. Thank you for giving me the opportunity to present our work.',
+      ja: 'おはようございます/こんにちは。発表の機会をいただきありがとうございます。', scene: '冒頭挨拶' },
+    { en: 'Today, I would like to talk about ...',
+      ja: '本日は〜についてお話しします。', scene: '導入' },
+    { en: 'The aim of this study was to investigate ...',
+      ja: '本研究の目的は〜を調べることでした。', scene: '目的' },
+    { en: 'The background of this study is as follows.',
+      ja: '本研究の背景は以下の通りです。', scene: '背景' },
+    { en: 'Previous studies have shown that ...',
+      ja: '先行研究では〜が示されています。', scene: '背景' },
+    { en: 'However, little is known about ...',
+      ja: 'しかし、〜についてはほとんど知られていません。', scene: '背景' },
+    { en: 'To address this question, we conducted ...',
+      ja: 'この問題に取り組むため、我々は〜を行いました。', scene: '方法' },
+    { en: 'Let me walk you through the experimental design.',
+      ja: '実験デザインについて説明させてください。', scene: '方法' },
+    { en: 'As you can see in this figure, ...',
+      ja: 'この図からおわかりのように...', scene: '結果' },
+    { en: 'This graph shows the relationship between ... and ...',
+      ja: 'このグラフは〜と〜の関係を示しています。', scene: '結果' },
+    { en: 'There was a significant difference between the two groups.',
+      ja: '2群間に有意な差が認められました。', scene: '結果' },
+    { en: 'We found that ... increased/decreased significantly.',
+      ja: '〜が有意に増加/減少したことがわかりました。', scene: '結果' },
+    { en: 'These results suggest that ...',
+      ja: 'これらの結果は〜を示唆しています。', scene: '考察' },
+    { en: 'One possible explanation for this finding is ...',
+      ja: 'この知見の1つの説明として〜が考えられます。', scene: '考察' },
+    { en: 'This is consistent with previous reports by ...',
+      ja: 'これは〜による先行報告と一致しています。', scene: '考察' },
+    { en: 'In contrast, our results differ from those of ...',
+      ja: '対照的に、我々の結果は〜の結果とは異なります。', scene: '考察' },
+    { en: 'A possible limitation of this study is ...',
+      ja: '本研究の限界として〜が考えられます。', scene: '考察' },
+    { en: 'In conclusion, our study demonstrates that ...',
+      ja: '結論として、本研究は〜を実証しました。', scene: '結論' },
+    { en: 'To summarize, the key findings of this study are ...',
+      ja: 'まとめると、本研究の主要な知見は...', scene: '結論' },
+    { en: 'Future studies should focus on ...',
+      ja: '今後の研究では〜に焦点を当てるべきです。', scene: '結論' },
+    { en: 'Thank you for your attention. I welcome any questions.',
+      ja: 'ご清聴ありがとうございました。ご質問をお待ちしています。', scene: '締め' },
+  ],
+  'qa-respond': [
+    { en: 'Thank you for your question.',
+      ja: 'ご質問ありがとうございます。', scene: '応答の導入' },
+    { en: 'That is a very good point.',
+      ja: 'とても良いご指摘です。', scene: '応答の導入' },
+    { en: 'I appreciate you raising that issue.',
+      ja: 'その問題を提起していただきありがとうございます。', scene: '応答の導入' },
+    { en: 'If I understand your question correctly, you are asking about ...',
+      ja: 'ご質問を正しく理解していれば、〜についてお尋ねですね。', scene: '質問の確認' },
+    { en: 'Could you please clarify what you mean by ...?',
+      ja: '〜とはどういう意味かもう少し説明いただけますか？', scene: '質問の確認' },
+    { en: 'Based on our data, we can say that ...',
+      ja: '我々のデータに基づくと、〜と言えます。', scene: '回答' },
+    { en: 'We actually considered that possibility, and ...',
+      ja: 'その可能性は実際に検討しまして...', scene: '回答' },
+    { en: 'That is a limitation of our current study.',
+      ja: 'それは本研究の限界です。', scene: '回答' },
+    { en: 'We plan to address this in our follow-up experiments.',
+      ja: '追加実験でこの点に取り組む予定です。', scene: '回答' },
+    { en: 'While I don\'t have the exact numbers right now, ...',
+      ja: '正確な数値は今手元にありませんが...', scene: '回答' },
+    { en: 'That is an interesting idea for future research.',
+      ja: 'それは今後の研究に興味深いアイデアです。', scene: '回答' },
+    { en: 'I would be happy to discuss this further after the session.',
+      ja: 'セッション後にさらに議論できれば幸いです。', scene: '回答の締め' },
+    { en: 'Does that answer your question?',
+      ja: 'ご質問への回答になっていますでしょうか？', scene: '回答の締め' },
+  ],
+  discussion: [
+    { en: 'I agree with your point, and I would like to add that ...',
+      ja: 'ご意見に同意します。付け加えると...', scene: '同意' },
+    { en: 'I see your point, but I would argue that ...',
+      ja: 'ご意見は理解できますが、〜と主張します。', scene: '反論' },
+    { en: 'That\'s an interesting perspective. However, ...',
+      ja: '興味深い視点ですが、しかし...', scene: '反論' },
+    { en: 'With respect, I have a slightly different interpretation.',
+      ja: '恐れ入りますが、少し異なる解釈を持っています。', scene: '反論' },
+    { en: 'Could you elaborate on that point?',
+      ja: 'その点についてもう少し詳しく説明していただけますか？', scene: '質問' },
+    { en: 'What is the evidence supporting that claim?',
+      ja: 'その主張を支持する証拠は何ですか？', scene: '質問' },
+    { en: 'Have you considered the possibility that ...?',
+      ja: '〜の可能性は検討されましたか？', scene: '質問' },
+    { en: 'I think we need to consider this from a different angle.',
+      ja: '別の角度から検討する必要があると思います。', scene: '提案' },
+    { en: 'Perhaps we could explore this further by ...',
+      ja: 'おそらく〜によってさらに探求できるのでは。', scene: '提案' },
+    { en: 'Building on your idea, what if we ...',
+      ja: 'あなたのアイデアを発展させて、もし〜したら。', scene: '提案' },
+    { en: 'To put it another way, ...',
+      ja: '言い換えると...', scene: '言い換え' },
+    { en: 'In other words, what you\'re suggesting is ...',
+      ja: '言い換えれば、あなたの提案は...', scene: '言い換え' },
+  ],
+  writing: [
+    { en: 'The purpose of this study was to ...',
+      ja: '本研究の目的は〜であった。', scene: 'Introduction' },
+    { en: 'It has been well established that ...',
+      ja: '〜はよく知られている。', scene: 'Introduction' },
+    { en: 'To date, however, no studies have examined ...',
+      ja: 'しかし、これまで〜を調べた研究はない。', scene: 'Introduction' },
+    { en: 'Here, we report that ...',
+      ja: 'ここで、我々は〜を報告する。', scene: 'Introduction' },
+    { en: 'Samples were collected from ... during ...',
+      ja: '試料は〜から〜の期間に採集された。', scene: 'Methods' },
+    { en: 'All experiments were performed in triplicate.',
+      ja: 'すべての実験は3連で行った。', scene: 'Methods' },
+    { en: 'Statistical analyses were performed using ...',
+      ja: '統計解析は〜を用いて行った。', scene: 'Methods' },
+    { en: 'Values are expressed as mean plus or minus standard deviation.',
+      ja: '値は平均値 +/- 標準偏差で示した。', scene: 'Methods' },
+    { en: 'A statistically significant difference was observed between ...',
+      ja: '〜間に統計的に有意な差が認められた。', scene: 'Results' },
+    { en: 'No significant difference was found in ...',
+      ja: '〜に有意な差は認められなかった。', scene: 'Results' },
+    { en: 'Figure 1 shows the temporal variation of ...',
+      ja: '図1は〜の経時変化を示す。', scene: 'Results' },
+    { en: 'These findings are in agreement with those reported by ...',
+      ja: 'これらの知見は〜によって報告されたものと一致する。', scene: 'Discussion' },
+    { en: 'A plausible explanation for this observation is ...',
+      ja: 'この観察に対する妥当な説明は〜である。', scene: 'Discussion' },
+    { en: 'Further research is needed to clarify ...',
+      ja: '〜を明らかにするためにさらなる研究が必要である。', scene: 'Discussion' },
+    { en: 'Taken together, our results demonstrate that ...',
+      ja: '総合すると、我々の結果は〜を実証している。', scene: 'Conclusion' },
+  ]
+};
+
+let phraseCat = 'presentation';
+let phraseMode = 'browse';
+let phraseIndex = 0;
+let phraseDeck = [];
+
+function renderPhrases() {
+  const area = document.getElementById('phraseArea');
+  phraseDeck = PHRASES_DB[phraseCat] || [];
+  if (phraseMode === 'browse') renderPhraseBrowse(area);
+  else if (phraseMode === 'flash') renderPhraseFlash(area);
+  else if (phraseMode === 'dictation') renderPhraseDictation(area);
+  else if (phraseMode === 'fill') renderPhraseFill(area);
+}
+
+function renderPhraseBrowse(area) {
+  // Group by scene
+  const groups = {};
+  for (const p of phraseDeck) {
+    if (!groups[p.scene]) groups[p.scene] = [];
+    groups[p.scene].push(p);
+  }
+  area.innerHTML = Object.entries(groups).map(([scene, phrases]) => `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;color:var(--primary);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;padding-left:4px;">${scene}</div>
+      ${phrases.map(p => `
+        <div class="word-card" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button class="btn-speak phrase-tts" data-text="${p.en.replace(/"/g, '&quot;')}" style="width:30px;height:30px;flex-shrink:0;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+            </button>
+            <div style="font-size:15px;line-height:1.5;color:var(--text);">${p.en}</div>
+          </div>
+          <div style="font-size:13px;color:var(--text3);padding-left:38px;">${p.ja}</div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+
+  area.querySelectorAll('.phrase-tts').forEach(btn => {
+    btn.addEventListener('click', e => { e.stopPropagation(); speak(btn.dataset.text); });
+  });
+}
+
+function renderPhraseFlash(area) {
+  phraseDeck = [...(PHRASES_DB[phraseCat] || [])].sort(() => Math.random() - 0.5);
+  phraseIndex = 0;
+  showPhraseFlash(area);
+}
+
+function showPhraseFlash(area) {
+  if (phraseIndex >= phraseDeck.length) {
+    area.innerHTML = `
+      <div class="flashcard-container">
+        <div class="flashcard"><div class="flashcard-word">Complete!</div>
+        <div class="flashcard-hint">${phraseDeck.length}フレーズを復習しました</div></div>
+      </div>`;
+    return;
+  }
+  const p = phraseDeck[phraseIndex];
+  area.innerHTML = `
+    <div class="flashcard-container">
+      <div style="font-size:12px;color:var(--primary);margin-bottom:8px;">${p.scene}</div>
+      <div class="flashcard" id="phraseCard">
+        <div class="flashcard-word" style="font-size:16px;line-height:1.5;" id="phraseQ">${p.ja}</div>
+        <div class="flashcard-hint" id="phraseHint">タップで英語を表示</div>
+        <div class="flashcard-meaning" id="phraseA" style="font-size:16px;">${p.en}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center;">
+        <button class="btn-speak" id="phraseTTS" style="width:40px;height:40px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+        </button>
+        <button class="btn btn-danger btn-sm" id="phraseAgain">もう一度</button>
+        <button class="btn btn-sm" style="background:var(--accent);color:#fff;" id="phraseOK">覚えた</button>
+      </div>
+      <div class="fc-progress" style="margin-top:12px;">${phraseIndex + 1} / ${phraseDeck.length}</div>
+    </div>`;
+
+  let flipped = false;
+  document.getElementById('phraseCard').addEventListener('click', () => {
+    if (!flipped) {
+      flipped = true;
+      document.getElementById('phraseA').classList.add('show');
+      document.getElementById('phraseHint').textContent = '';
+    }
+  });
+  document.getElementById('phraseTTS').addEventListener('click', () => speak(p.en));
+  document.getElementById('phraseAgain').addEventListener('click', () => {
+    if (phraseIndex < phraseDeck.length - 2) {
+      phraseDeck.splice(phraseIndex + 3 + Math.floor(Math.random() * 3), 0, p);
+    }
+    phraseIndex++;
+    showPhraseFlash(area);
+  });
+  document.getElementById('phraseOK').addEventListener('click', () => {
+    phraseIndex++;
+    showPhraseFlash(area);
+  });
+}
+
+function renderPhraseDictation(area) {
+  const p = phraseDeck[Math.floor(Math.random() * phraseDeck.length)];
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type">ディクテーション</div>
+      <p style="font-size:13px;color:var(--text3);margin-bottom:12px;">音声を聞いて英文を書き取ってください</p>
+      <div style="display:flex;gap:12px;justify-content:center;margin-bottom:16px;">
+        <button class="btn-speak" id="dictListen" style="width:56px;height:56px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:28px;height:28px;"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+        </button>
+      </div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:8px;">場面: ${p.scene} | 日本語: ${p.ja}</div>
+      <textarea class="exercise-input" id="dictInput" rows="2" placeholder="聞き取った英文を入力..."></textarea>
+      <div class="exercise-feedback" id="dictFB"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-primary btn-block btn-sm" id="dictCheck">確認</button>
+        <button class="btn btn-secondary btn-sm" id="dictSkip">答えを見る</button>
+      </div>
+    </div>
+    <button class="btn btn-secondary btn-block btn-sm mt" id="dictNext">次の問題</button>`;
+
+  document.getElementById('dictListen').addEventListener('click', () => speak(p.en));
+  // Auto-play on load
+  setTimeout(() => speak(p.en), 300);
+
+  document.getElementById('dictCheck').addEventListener('click', () => {
+    const input = document.getElementById('dictInput').value.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '');
+    const answer = p.en.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+    const fb = document.getElementById('dictFB');
+    if (input === answer) {
+      fb.className = 'exercise-feedback feedback-correct';
+      fb.textContent = '完璧!';
+    } else {
+      // Show diff
+      const inputWords = input.split(/\s+/);
+      const answerWords = answer.split(/\s+/);
+      const diffHtml = answerWords.map(w =>
+        inputWords.includes(w)
+          ? `<span style="color:var(--accent);">${w}</span>`
+          : `<span style="color:var(--danger);text-decoration:underline;">${w}</span>`
+      ).join(' ');
+      fb.className = 'exercise-feedback feedback-incorrect';
+      fb.innerHTML = `正解: ${diffHtml}`;
+    }
+  });
+  document.getElementById('dictSkip').addEventListener('click', () => {
+    const fb = document.getElementById('dictFB');
+    fb.className = 'exercise-feedback feedback-incorrect';
+    fb.innerHTML = `<strong>${p.en}</strong>`;
+  });
+  document.getElementById('dictNext').addEventListener('click', () => renderPhraseDictation(area));
+}
+
+function renderPhraseFill(area) {
+  const p = phraseDeck[Math.floor(Math.random() * phraseDeck.length)];
+  const words = p.en.split(/\s+/);
+  // Remove 1-3 content words (not articles/prepositions)
+  const contentIndices = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i].replace(/[^a-zA-Z]/g, '').toLowerCase();
+    if (w.length >= 4 && !STOP_WORDS.has(w)) contentIndices.push(i);
+  }
+  const blankCount = Math.min(Math.max(1, Math.floor(contentIndices.length * 0.4)), 3);
+  const blanks = contentIndices.sort(() => Math.random() - 0.5).slice(0, blankCount);
+  const answers = blanks.map(i => words[i].replace(/[^a-zA-Z-]/g, '').toLowerCase());
+
+  const display = words.map((w, i) =>
+    blanks.includes(i)
+      ? `<span class="blank" data-idx="${blanks.indexOf(i)}">${blanks.indexOf(i) + 1}</span>${w.replace(/[a-zA-Z-]/g, '')}`
+      : w
+  ).join(' ');
+
+  area.innerHTML = `
+    <div class="exercise-box">
+      <div class="exercise-type">穴埋め</div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:8px;">場面: ${p.scene}</div>
+      <div style="font-size:13px;color:var(--primary);margin-bottom:12px;">${p.ja}</div>
+      <div class="exercise-prompt" style="font-size:16px;line-height:1.8;">${display}</div>
+      ${answers.map((a, i) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <span style="color:var(--primary);font-weight:700;width:20px;">${i+1}</span>
+          <input class="exercise-input phrase-blank-input" data-idx="${i}" placeholder="..." autocapitalize="none" autocorrect="off" style="flex:1;">
+        </div>
+      `).join('')}
+      <div class="exercise-feedback" id="fillFB"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-primary btn-block btn-sm" id="fillCheck">確認</button>
+        <button class="btn btn-secondary btn-sm" id="fillSkip">答えを見る</button>
+      </div>
+    </div>
+    <button class="btn btn-secondary btn-block btn-sm mt" id="fillNext">次の問題</button>`;
+
+  document.getElementById('fillCheck').addEventListener('click', () => {
+    const fb = document.getElementById('fillFB');
+    const inputs = area.querySelectorAll('.phrase-blank-input');
+    let correct = 0;
+    inputs.forEach(inp => {
+      const idx = parseInt(inp.dataset.idx);
+      if (inp.value.trim().toLowerCase() === answers[idx]) {
+        correct++;
+        inp.style.borderColor = 'var(--accent)';
+      } else {
+        inp.style.borderColor = 'var(--danger)';
+      }
+    });
+    if (correct === answers.length) {
+      fb.className = 'exercise-feedback feedback-correct';
+      fb.textContent = '全問正解!';
+    } else {
+      fb.className = 'exercise-feedback feedback-incorrect';
+      fb.innerHTML = `${correct}/${answers.length} 正解<br>正答: ${answers.join(', ')}`;
+    }
+  });
+  document.getElementById('fillSkip').addEventListener('click', () => {
+    const fb = document.getElementById('fillFB');
+    fb.className = 'exercise-feedback feedback-incorrect';
+    fb.innerHTML = `正答: ${answers.join(', ')}<br><strong>${p.en}</strong>`;
+  });
+  document.getElementById('fillNext').addEventListener('click', () => renderPhraseFill(area));
+}
+
+document.getElementById('phraseCategory').addEventListener('click', e => {
+  if (!e.target.classList.contains('tab-btn')) return;
+  document.querySelectorAll('#phraseCategory .tab-btn').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  phraseCat = e.target.dataset.cat;
+  renderPhrases();
+});
+
+document.getElementById('phraseMode').addEventListener('click', e => {
+  if (!e.target.classList.contains('filter-chip')) return;
+  document.querySelectorAll('#phraseMode .filter-chip').forEach(c => c.classList.remove('active'));
+  e.target.classList.add('active');
+  phraseMode = e.target.dataset.pmode;
+  renderPhrases();
+});
+
+// ============ SETTINGS ============
+function renderSettings() {
+  const all = Object.values(APP.words);
+  document.getElementById('globalStats').innerHTML = `
+    <div class="stat-chip"><strong>${all.length}</strong>総単語</div>
+    <div class="stat-chip"><strong>${APP.sentences.length}</strong>総文</div>
+    <div class="stat-chip"><strong>${APP.papers.length}</strong>論文</div>
+  `;
+
+  document.getElementById('settingFlashTarget').value = APP.settings.flashTarget || 'new-learning';
+  document.getElementById('settingSessionSize').value = APP.settings.sessionSize ?? 20;
+
+  document.getElementById('paperList').innerHTML = APP.papers.length === 0
+    ? '<p style="color:var(--text3);font-size:14px;">まだ論文が取り込まれていません</p>'
+    : APP.papers.map(p => `
+      <div class="word-card" style="margin-top:8px;">
+        <div class="word-info">
+          <div class="word-text" style="font-size:14px;">${p.name}</div>
+          <div class="word-count">${new Date(p.date).toLocaleDateString('ja-JP')}</div>
+        </div>
+      </div>
+    `).join('');
+}
+
+document.getElementById('settingFlashTarget').addEventListener('change', e => {
+  APP.settings.flashTarget = e.target.value;
+  saveData(APP);
+});
+
+document.getElementById('settingSessionSize').addEventListener('change', e => {
+  APP.settings.sessionSize = parseInt(e.target.value);
+  saveData(APP);
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  if (!confirm('すべての学習データを削除しますか？\nこの操作は元に戻せません。')) return;
+  localStorage.removeItem(DB_KEY);
+  APP = loadData();
+  renderSettings();
+  alert('データをリセットしました');
+});
+
+// ============ INIT ============
+renderPaperHistory();
+
+// Register service worker for PWA
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+console.log('Paper Trainer: script end OK');
+} catch(e) { console.error('Paper Trainer INIT ERROR:', e); document.body.innerHTML = '<div style="padding:20px;color:red;font-size:16px;">Error: ' + e.message + '</div>'; }
+</script>
+</body>
+</html>
