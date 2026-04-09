@@ -872,23 +872,45 @@ function loadVoices() {
 if ('speechSynthesis' in window) {
   loadVoices();
   speechSynthesis.onvoiceschanged = loadVoices;
+  // iOS Safari: unlock speech on first user tap
+  const unlockSpeech = () => {
+    const u = new SpeechSynthesisUtterance('');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+    document.removeEventListener('touchstart', unlockSpeech);
+    document.removeEventListener('click', unlockSpeech);
+  };
+  document.addEventListener('touchstart', unlockSpeech, { once: true });
+  document.addEventListener('click', unlockSpeech, { once: true });
 }
 
 function speak(text, lang = 'en-US') {
-  if (!('speechSynthesis' in window)) return;
-  // iOS Safari workaround: cancel then short delay before speak
+  if (!('speechSynthesis' in window) || !text) return;
+  // MUST be synchronous from user gesture — no setTimeout on iOS
   speechSynthesis.cancel();
+  // iOS: pause/resume workaround for stuck state
+  speechSynthesis.pause();
+  speechSynthesis.resume();
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = lang;
   utter.rate = 0.85;
   if (cachedVoices.length === 0) cachedVoices = speechSynthesis.getVoices();
-  const enVoice = cachedVoices.find(v => v.lang.startsWith('en') && v.name.includes('Enhanced'))
-    || cachedVoices.find(v => v.lang === 'en-US')
+  const enVoice = cachedVoices.find(v => v.lang === 'en-US')
     || cachedVoices.find(v => v.lang.startsWith('en-US'))
     || cachedVoices.find(v => v.lang.startsWith('en'));
   if (enVoice) utter.voice = enVoice;
-  // iOS needs a tiny delay after cancel
-  setTimeout(() => speechSynthesis.speak(utter), 10);
+  speechSynthesis.speak(utter);
+  // iOS Safari 15+ bug: speech stops after ~15s. Keep it alive.
+  let keepAlive;
+  utter.onstart = () => {
+    keepAlive = setInterval(() => {
+      if (!speechSynthesis.speaking) { clearInterval(keepAlive); return; }
+      speechSynthesis.pause();
+      speechSynthesis.resume();
+    }, 5000);
+  };
+  utter.onend = () => clearInterval(keepAlive);
+  utter.onerror = () => clearInterval(keepAlive);
   return utter;
 }
 
@@ -2878,9 +2900,14 @@ document.getElementById('btnReset').addEventListener('click', () => {
 // ============ INIT ============
 renderPaperHistory();
 
-// Register service worker for PWA
+// Unregister old service workers and clear cache to prevent stale content
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(r => r.unregister());
+  });
+}
+if ('caches' in window) {
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
 }
 
 console.log('Paper Trainer: script end OK');
