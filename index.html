@@ -482,6 +482,25 @@ select:focus { border-color: var(--primary); outline: none; }
 <!-- Settings Page -->
 <div class="page" id="page-settings">
   <h1 class="page-title">設定</h1>
+
+  <div class="setting-group">
+    <div class="setting-label">AI連携（APIキー）</div>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:8px;">
+      設定するとPDF取込時にAIが専門用語・日本語訳・例文・質疑応答を自動生成します。キーは端末内のみに保存されます。
+    </p>
+    <select id="settingAIProvider" style="margin-bottom:8px;">
+      <option value="none">AI未使用（従来方式）</option>
+      <option value="openai">OpenAI (GPT-4o)</option>
+      <option value="anthropic">Anthropic (Claude)</option>
+    </select>
+    <input class="modal-input" id="settingAPIKey" type="password" placeholder="APIキーを入力..." style="margin-bottom:4px;">
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary btn-sm" id="btnSaveKey">保存</button>
+      <button class="btn btn-secondary btn-sm" id="btnTestKey">接続テスト</button>
+    </div>
+    <div id="apiKeyStatus" style="font-size:12px;margin-top:6px;color:var(--text3);"></div>
+  </div>
+
   <div class="setting-group">
     <div class="setting-label">学習データ</div>
     <div class="stats-bar" id="globalStats"></div>
@@ -1139,19 +1158,56 @@ async function handleFiles(files) {
         continue;
       }
 
-      showProgress('単語を解析中...', 90);
-      const result = importText(text, paperName);
-      renderPaperHistory();
-      alert(`${paperName}\n\n新規単語: ${result.addedCount}\n総抽出語: ${result.totalWords}\n文: ${result.sentenceCount}`);
-      // Auto-lookup meanings in background
-      const needLookup = Object.keys(APP.words).filter(w => !APP.words[w].meaning);
-      if (needLookup.length > 0) {
-        showProgress(`意味を自動検索中... (${needLookup.length}語)`, 95);
-        const filled = await batchLookup(needLookup);
-        showProgress(`${filled}語の意味を取得しました`, 100);
-        setTimeout(hideProgress, 2000);
+      const aiConfig = getAIConfig();
+      if (aiConfig.provider !== 'none' && aiConfig.apiKey) {
+        // ---- AI解析モード ----
+        showProgress('AIが論文を解析中...', 50);
+        try {
+          const aiData = await analyzeWithAI(text, paperName);
+          if (aiData) {
+            showProgress('AI結果を取り込み中...', 90);
+            const aiResult = importAIData(aiData, paperName);
+            // Also run traditional extraction for sentences
+            const { sentences: extraSentences } = extractWords(text);
+            const existingSentences = new Set(APP.sentences);
+            for (const s of extraSentences) {
+              if (!existingSentences.has(s)) APP.sentences.push(s);
+            }
+            saveData(APP);
+            hideProgress();
+            renderPaperHistory();
+            alert(`${paperName} (AI解析)\n\n単語: ${aiResult.addedWords}語\n例文: ${aiResult.sentences}文\n質疑応答: ${aiResult.questions}問`);
+          } else {
+            // AI failed, fallback to traditional
+            showProgress('AI解析失敗。従来方式で解析中...', 90);
+            const result = importText(text, paperName);
+            hideProgress();
+            renderPaperHistory();
+            alert(`${paperName} (従来方式)\n\n新規単語: ${result.addedCount}\n文: ${result.sentenceCount}`);
+          }
+        } catch (aiErr) {
+          console.error('AI analysis error:', aiErr);
+          showProgress('AI解析エラー。従来方式で解析中...', 90);
+          const result = importText(text, paperName);
+          hideProgress();
+          renderPaperHistory();
+          alert(`${paperName} (従来方式)\n\nAIエラー: ${aiErr.message}\n\n新規単語: ${result.addedCount}\n文: ${result.sentenceCount}`);
+        }
       } else {
-        hideProgress();
+        // ---- 従来方式 ----
+        showProgress('単語を解析中...', 90);
+        const result = importText(text, paperName);
+        renderPaperHistory();
+        alert(`${paperName}\n\n新規単語: ${result.addedCount}\n総抽出語: ${result.totalWords}\n文: ${result.sentenceCount}`);
+        const needLookup = Object.keys(APP.words).filter(w => !APP.words[w].meaning);
+        if (needLookup.length > 0) {
+          showProgress(`意味を自動検索中... (${needLookup.length}語)`, 95);
+          const filled = await batchLookup(needLookup);
+          showProgress(`${filled}語の意味を取得しました`, 100);
+          setTimeout(hideProgress, 2000);
+        } else {
+          hideProgress();
+        }
       }
 
     } catch (err) {
@@ -2337,9 +2393,47 @@ function renderQA() {
   generateQAExercise();
 }
 
+function getAIQuestion(type) {
+  if (!APP.aiQuestions || APP.aiQuestions.length === 0) return null;
+  const filtered = type === 'content' ? APP.aiQuestions : APP.aiQuestions.filter(q => q.category === type);
+  const pool = filtered.length > 0 ? filtered : APP.aiQuestions;
+  const q = pool[Math.floor(Math.random() * pool.length)];
+  return { question: q.question, hint: q.hint_ja || '', reference: q.model_answer || '', type: q.category || type, modelAnswer: q.model_answer || '' };
+}
+
+async function getAIFeedback(question, userAnswer, modelAnswer) {
+  const prompt = `You are an English coach for a Japanese scientist practicing Q&A at an international conference.
+
+QUESTION: "${question}"
+USER'S ANSWER: "${userAnswer}"
+MODEL ANSWER: "${modelAnswer}"
+
+Evaluate the user's answer and respond in this JSON format (ONLY valid JSON, no markdown):
+{
+  "score": 75,
+  "grammar_notes": "Brief grammar corrections if any",
+  "content_notes": "How well they addressed the question",
+  "improved_version": "A polished version of their answer",
+  "tips_ja": "日本語でのアドバイス（1-2文）"
+}
+
+Score 0-100. Be encouraging but honest.`;
+
+  try {
+    const result = await callAI(prompt, 1000);
+    if (!result) return null;
+    const cleaned = result.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error('AI feedback error:', e);
+    return null;
+  }
+}
+
 function generateQAExercise() {
   const area = document.getElementById('qaArea');
-  const qa = generateQuestion(qaType);
+  // Prefer AI-generated questions if available
+  const qa = getAIQuestion(qaType) || generateQuestion(qaType);
   if (!qa) {
     area.innerHTML = '<div class="empty-state"><p>質問を生成できません。<br>もう少し論文テキストを取り込んでください。</p></div>';
     return;
@@ -2422,12 +2516,36 @@ function generateQAExercise() {
     );
   });
 
-  document.getElementById('qaCheck').addEventListener('click', () => {
+  document.getElementById('qaCheck').addEventListener('click', async () => {
     const answer = document.getElementById('qaInput').value.trim();
     const fb = document.getElementById('qaFeedback');
     if (!answer) { fb.innerHTML = '<div style="color:var(--warn);font-size:14px;">回答を入力してください</div>'; return; }
 
-    // Evaluate answer
+    const aiConfig = getAIConfig();
+    const modelAnswer = qa.modelAnswer || qa.reference || '';
+
+    // AI feedback if available
+    if (aiConfig.provider !== 'none' && aiConfig.apiKey) {
+      fb.innerHTML = '<div style="text-align:center;color:var(--primary);padding:16px;">AIが回答を評価中...</div>';
+      const aiFb = await getAIFeedback(qa.question, answer, modelAnswer);
+      if (aiFb) {
+        const scoreClass = aiFb.score >= 70 ? 'score-good' : aiFb.score >= 40 ? 'score-ok' : 'score-bad';
+        fb.innerHTML = `
+          <div class="pronunciation-result">
+            <div class="pronunciation-score ${scoreClass}">${aiFb.score}%</div>
+            <div style="font-size:13px;color:var(--text3);margin-top:4px;">AI評価</div>
+            <div style="text-align:left;margin-top:12px;font-size:13px;line-height:1.6;">
+              ${aiFb.grammar_notes ? `<div style="color:var(--text2);padding:4px 0;"><strong style="color:var(--primary);">文法:</strong> ${aiFb.grammar_notes}</div>` : ''}
+              ${aiFb.content_notes ? `<div style="color:var(--text2);padding:4px 0;"><strong style="color:var(--primary);">内容:</strong> ${aiFb.content_notes}</div>` : ''}
+              ${aiFb.improved_version ? `<div style="color:var(--accent);padding:8px 0;"><strong>改善例:</strong><br>${aiFb.improved_version}</div>` : ''}
+              ${aiFb.tips_ja ? `<div style="color:var(--warn);padding:4px 0;">${aiFb.tips_ja}</div>` : ''}
+            </div>
+          </div>`;
+        return;
+      }
+    }
+
+    // Fallback: rule-based evaluation
     const words = answer.split(/\s+/);
     const wordCount = words.length;
     const hasKeyword = getKeywordsFromPaper().some(k => answer.toLowerCase().includes(k));
@@ -2436,20 +2554,16 @@ function generateQAExercise() {
     let score = 0;
     let feedback = [];
 
-    // Length check
     if (wordCount >= 30) { score += 3; feedback.push('十分な長さの回答です'); }
     else if (wordCount >= 15) { score += 2; feedback.push('もう少し詳しく回答するとベター'); }
     else { score += 1; feedback.push('回答が短すぎます。具体的に説明しましょう'); }
 
-    // Uses scientific vocabulary
     if (hasKeyword) { score += 2; feedback.push('専門用語を使えています'); }
     else { feedback.push('論文のキーワードを使って具体的に答えましょう'); }
 
-    // Has structure (multiple sentences)
     if (sentenceCount >= 2) { score += 1; feedback.push('複数文で構成されています'); }
     else { feedback.push('2文以上で構成すると説得力が増します'); }
 
-    // Polite opening
     const hasOpener = /^(thank|that'?s|well|yes|actually|let me|i think|based on|we found|our data|to address|as i)/i.test(answer);
     if (hasOpener) { score += 1; feedback.push('丁寧な導入ができています'); }
     else { feedback.push('"Thank you for your question." など導入フレーズを使いましょう'); }
@@ -3112,6 +3226,207 @@ document.getElementById('phraseMode').addEventListener('click', e => {
   renderPhrases();
 });
 
+// ============ AI INTEGRATION ============
+function getAIConfig() {
+  return {
+    provider: localStorage.getItem('pt_ai_provider') || 'none',
+    apiKey: localStorage.getItem('pt_ai_key') || ''
+  };
+}
+
+function saveAIConfig(provider, key) {
+  localStorage.setItem('pt_ai_provider', provider);
+  localStorage.setItem('pt_ai_key', key);
+}
+
+async function callAI(prompt, maxTokens = 4096) {
+  const { provider, apiKey } = getAIConfig();
+  if (!apiKey || provider === 'none') return null;
+
+  if (provider === 'openai') {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature: 0.3
+      })
+    });
+    if (!res.ok) throw new Error(`OpenAI API error: ${res.status}`);
+    const data = await res.json();
+    return data.choices[0].message.content;
+  }
+
+  if (provider === 'anthropic') {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if (!res.ok) throw new Error(`Anthropic API error: ${res.status}`);
+    const data = await res.json();
+    return data.content[0].text;
+  }
+
+  return null;
+}
+
+async function testAIConnection() {
+  const statusEl = document.getElementById('apiKeyStatus');
+  statusEl.textContent = '接続テスト中...';
+  statusEl.style.color = 'var(--primary)';
+  try {
+    const result = await callAI('Reply with just "OK" in one word.');
+    if (result) {
+      statusEl.textContent = '接続成功!';
+      statusEl.style.color = 'var(--accent)';
+    } else {
+      statusEl.textContent = 'AI未設定です';
+      statusEl.style.color = 'var(--warn)';
+    }
+  } catch (e) {
+    statusEl.textContent = 'エラー: ' + e.message;
+    statusEl.style.color = 'var(--danger)';
+  }
+}
+
+// AI-powered paper analysis
+async function analyzeWithAI(text, paperName) {
+  const truncated = text.slice(0, 12000); // API token limit
+
+  const prompt = `You are a scientific English tutor for Japanese researchers. Analyze this paper text and generate learning materials.
+
+PAPER TEXT:
+${truncated}
+
+Generate a JSON object with this exact structure (respond with ONLY valid JSON, no markdown):
+{
+  "vocabulary": [
+    {
+      "word": "calcification",
+      "meaning_ja": "石灰化",
+      "meaning_en": "The process of calcium carbonate deposition",
+      "level": 2,
+      "example": "Coral calcification rates decreased under elevated CO2."
+    }
+  ],
+  "sentences": [
+    "Important sentences extracted from the paper for exercises"
+  ],
+  "qa_questions": [
+    {
+      "question": "What was the main finding regarding calcification rates?",
+      "hint_ja": "石灰化速度に関する主な知見は？",
+      "category": "content",
+      "model_answer": "Our results showed that calcification rates decreased significantly under high CO2 conditions."
+    }
+  ]
+}
+
+RULES:
+- vocabulary: Extract 30-50 scientific/technical terms. Level: 1=intermediate, 2=advanced, 3=expert
+- meaning_ja: Concise Japanese translation (2-8 chars preferred). Must be accurate scientific Japanese.
+- example: A sentence from the paper using this word, or a natural example sentence.
+- sentences: Extract 15-20 key sentences suitable for English exercises (not figure captions or references).
+- qa_questions: Generate 10-15 realistic conference Q&A questions about this paper's content. Categories: content, method, critical, general
+- model_answer: A good example answer the presenter could give.
+- All Japanese must be natural and accurate.`;
+
+  const result = await callAI(prompt, 8000);
+  if (!result) return null;
+
+  // Parse JSON from response (handle markdown code blocks)
+  let json;
+  try {
+    const cleaned = result.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    json = JSON.parse(cleaned);
+  } catch (e) {
+    console.error('AI JSON parse error:', e, result.slice(0, 200));
+    return null;
+  }
+  return json;
+}
+
+// Import AI-analyzed data into app
+function importAIData(aiData, paperName) {
+  let addedWords = 0;
+
+  // Import vocabulary
+  if (aiData.vocabulary) {
+    for (const v of aiData.vocabulary) {
+      const w = v.word.toLowerCase();
+      if (!APP.words[w]) {
+        APP.words[w] = {
+          word: w,
+          meaning: v.meaning_ja || '',
+          meaning_en: v.meaning_en || '',
+          status: 'new',
+          count: 1,
+          sentences: v.example ? [v.example] : [],
+          score: v.level >= 3 ? 6 : v.level >= 2 ? 4 : 2,
+          level: v.level || 1,
+          paper: paperName,
+          addedAt: Date.now()
+        };
+        addedWords++;
+      } else {
+        // Update meaning if better
+        if (v.meaning_ja && !APP.words[w].meaning) APP.words[w].meaning = v.meaning_ja;
+        if (v.example && APP.words[w].sentences.length < 5) APP.words[w].sentences.push(v.example);
+        APP.words[w].count++;
+      }
+    }
+  }
+
+  // Import sentences
+  if (aiData.sentences) {
+    APP.sentences.push(...aiData.sentences);
+  }
+
+  // Import Q&A questions
+  if (aiData.qa_questions) {
+    if (!APP.aiQuestions) APP.aiQuestions = [];
+    APP.aiQuestions.push(...aiData.qa_questions.map(q => ({ ...q, paper: paperName })));
+  }
+
+  APP.papers.push({
+    name: paperName, date: Date.now(),
+    wordCount: addedWords, sentenceCount: (aiData.sentences || []).length,
+    aiGenerated: true
+  });
+
+  saveData(APP);
+  return { addedWords, sentences: (aiData.sentences || []).length, questions: (aiData.qa_questions || []).length };
+}
+
+// AI settings event listeners
+document.getElementById('btnSaveKey').addEventListener('click', () => {
+  const provider = document.getElementById('settingAIProvider').value;
+  const key = document.getElementById('settingAPIKey').value.trim();
+  saveAIConfig(provider, key);
+  const s = document.getElementById('apiKeyStatus');
+  s.textContent = '保存しました';
+  s.style.color = 'var(--accent)';
+});
+
+document.getElementById('btnTestKey').addEventListener('click', () => {
+  const provider = document.getElementById('settingAIProvider').value;
+  const key = document.getElementById('settingAPIKey').value.trim();
+  saveAIConfig(provider, key);
+  testAIConnection();
+});
+
 // ============ SETTINGS ============
 function renderSettings() {
   const all = Object.values(APP.words);
@@ -3120,6 +3435,11 @@ function renderSettings() {
     <div class="stat-chip"><strong>${APP.sentences.length}</strong>総文</div>
     <div class="stat-chip"><strong>${APP.papers.length}</strong>論文</div>
   `;
+
+  // AI settings
+  const aiConf = getAIConfig();
+  document.getElementById('settingAIProvider').value = aiConf.provider;
+  document.getElementById('settingAPIKey').value = aiConf.apiKey;
 
   document.getElementById('settingFlashTarget').value = APP.settings.flashTarget || 'new-learning';
   document.getElementById('settingSessionSize').value = APP.settings.sessionSize ?? 20;
