@@ -862,26 +862,34 @@ function importText(text, paperName) {
 }
 
 // ============ SPEECH SYNTHESIS ============
+// Cache voices
+let cachedVoices = [];
+function loadVoices() {
+  if ('speechSynthesis' in window) {
+    cachedVoices = speechSynthesis.getVoices();
+  }
+}
+if ('speechSynthesis' in window) {
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices;
+}
+
 function speak(text, lang = 'en-US') {
   if (!('speechSynthesis' in window)) return;
+  // iOS Safari workaround: cancel then short delay before speak
   speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = lang;
   utter.rate = 0.85;
-  // Prefer English voice
-  const voices = speechSynthesis.getVoices();
-  const enVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Enhanced'))
-    || voices.find(v => v.lang.startsWith('en-US'))
-    || voices.find(v => v.lang.startsWith('en'));
+  if (cachedVoices.length === 0) cachedVoices = speechSynthesis.getVoices();
+  const enVoice = cachedVoices.find(v => v.lang.startsWith('en') && v.name.includes('Enhanced'))
+    || cachedVoices.find(v => v.lang === 'en-US')
+    || cachedVoices.find(v => v.lang.startsWith('en-US'))
+    || cachedVoices.find(v => v.lang.startsWith('en'));
   if (enVoice) utter.voice = enVoice;
-  speechSynthesis.speak(utter);
+  // iOS needs a tiny delay after cancel
+  setTimeout(() => speechSynthesis.speak(utter), 10);
   return utter;
-}
-
-// Preload voices
-if ('speechSynthesis' in window) {
-  speechSynthesis.getVoices();
-  speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
 }
 
 // ============ SPEECH RECOGNITION ============
