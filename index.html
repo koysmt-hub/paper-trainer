@@ -1340,9 +1340,10 @@ async function lookupWord(word) {
   return { word: entry.word, phonetic, meanings };
 }
 
-// Sci-term Japanese glossary (common terms in marine/coral/chemistry papers)
-const SCI_JA_GLOSSARY = {
-  // ── サンゴ・海洋生物 ──
+// Sci-term Japanese glossary — loaded from external JSON (2500+ terms)
+// Inline fallback with core terms; sci-dict.json merges on top at startup
+let SCI_JA_GLOSSARY = {
+  // ── core fallback (used if JSON fails to load) ──
   coral: 'サンゴ', reef: '礁', atoll: '環礁', lagoon: 'ラグーン/礁湖',
   polyp: 'ポリプ', colony: '群体', skeleton: '骨格', tentacle: '触手',
   cnidarian: '刺胞動物', anthozoan: '花虫綱', scleractinian: 'イシサンゴ目',
@@ -1541,6 +1542,12 @@ const SCI_JA_GLOSSARY = {
   acclimation: '順化', acclimatization: '馴化',
   phenology: 'フェノロジー/生物季節学',
 };
+
+// Load extended dictionary from JSON
+fetch('sci-dict.json').then(r => r.json()).then(dict => {
+  SCI_JA_GLOSSARY = Object.assign({}, SCI_JA_GLOSSARY, dict);
+  console.log(`sci-dict.json loaded: ${Object.keys(dict).length} terms`);
+}).catch(e => console.warn('sci-dict.json load failed, using inline glossary:', e));
 
 // Translate English word/phrase to Japanese using MyMemory API
 async function translateToJa(text) {
