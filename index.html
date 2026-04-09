@@ -3408,28 +3408,47 @@ async function analyzeWithAI(text, paperName) {
   }
   showProgress(`${wordList.length}語検出 (用語集${merged.vocabulary.length}語済)。AI翻訳${needTranslation.length}語... (2/4)`, 15);
 
-  // Step 2: Translate remaining words in small batches of 30
-  const BATCH = 30;
+  // Step 2: Translate remaining words in small batches of 25
+  const BATCH = 25;
+  const translated = new Set();
   for (let i = 0; i < needTranslation.length; i += BATCH) {
     const batch = needTranslation.slice(i, i + BATCH);
     const done = merged.vocabulary.length;
-    showProgress(`翻訳中... ${done + i}/${wordList.length}語 (2/4)`, 15 + (i / Math.max(needTranslation.length, 1)) * 45);
+    showProgress(`翻訳中... ${done}/${wordList.length}語 (2/4)`, 15 + (i / Math.max(needTranslation.length, 1)) * 45);
     try {
       const translations = await translateWordBatch(batch);
-      for (let j = 0; j < translations.length; j++) {
-        const t = translations[j];
-        const w = (t.w || t.word || batch[j]).toLowerCase();
-        if (t.ja) {
-          const regex = new RegExp('[^.!?]*\\b' + w + '\\b[^.!?]*[.!?]', 'i');
-          const exMatch = text.match(regex);
-          merged.vocabulary.push({
-            word: w, meaning_ja: t.ja, meaning_en: t.en || '',
-            level: t.lv || t.level || 1,
-            example: exMatch ? exMatch[0].trim() : ''
-          });
-        }
+      // Map AI results by word
+      const aiMap = {};
+      for (const t of translations) {
+        const w = (t.w || t.word || '').toLowerCase();
+        if (w) aiMap[w] = t;
       }
-    } catch (e) { console.warn('Batch error, continuing:', e); }
+      // Process ALL words in batch — use AI result if available, otherwise add without translation
+      for (const bw of batch) {
+        if (translated.has(bw)) continue;
+        translated.add(bw);
+        const t = aiMap[bw];
+        const regex = new RegExp('[^.!?]*\\b' + bw + '\\b[^.!?]*[.!?]', 'i');
+        const exMatch = text.match(regex);
+        merged.vocabulary.push({
+          word: bw,
+          meaning_ja: t?.ja || '',
+          meaning_en: t?.en || '',
+          level: t?.lv || t?.level || 1,
+          example: exMatch ? exMatch[0].trim() : ''
+        });
+      }
+    } catch (e) {
+      // Even on error, add words without translation
+      console.warn('Batch error, adding words without translation:', e);
+      for (const bw of batch) {
+        if (translated.has(bw)) continue;
+        translated.add(bw);
+        const regex = new RegExp('[^.!?]*\\b' + bw + '\\b[^.!?]*[.!?]', 'i');
+        const exMatch = text.match(regex);
+        merged.vocabulary.push({ word: bw, meaning_ja: '', meaning_en: '', level: 1, example: exMatch ? exMatch[0].trim() : '' });
+      }
+    }
   }
 
   // Step 3: Key sentences
