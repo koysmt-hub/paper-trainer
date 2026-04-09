@@ -2342,9 +2342,91 @@ let phraseMode = 'browse';
 let phraseIndex = 0;
 let phraseDeck = [];
 
+// Fill "..." placeholders with actual paper content
+function fillPhraseWithPaper(phrase) {
+  const kws = getKeywordsFromPaper();
+  const findings = getFindings();
+  const allSentences = APP.sentences || [];
+
+  if (kws.length === 0 && allSentences.length === 0) return phrase;
+
+  const pick = arr => arr.length > 0 ? arr[Math.floor(Math.random() * arr.length)] : null;
+  const pickKw = () => pick(kws.slice(0, 15)) || '...';
+  const pickKw2 = () => { const k = pickKw(); const others = kws.filter(x => x !== k); return others.length > 0 ? pick(others.slice(0, 10)) : '...'; };
+
+  // Extract short finding clauses (strip leading articles/connectors, keep short)
+  const shortFinding = () => {
+    const f = pick(findings);
+    if (!f) return '...';
+    // Take a meaningful clause, trim to ~15 words
+    let cl = f.replace(/^[^a-zA-Z]*/, '').replace(/^\s*(The|A|An|Our|This|These|In|We|It)\s+/i, '');
+    const words = cl.split(/\s+/);
+    if (words.length > 15) cl = words.slice(0, 15).join(' ') + '...';
+    return cl.charAt(0).toLowerCase() + cl.slice(1);
+  };
+
+  // Purpose-like sentences (contain "aim", "purpose", "investigate", "examine", "objective")
+  const purposeSentence = () => {
+    const p = allSentences.find(s => /\b(aim|purpose|objective|investigate|examine|elucidate|determine whether)\b/i.test(s));
+    if (p) {
+      const m = p.match(/\b(?:to\s+)(investigate|examine|elucidate|determine|clarify|assess|evaluate|explore)\b.{5,60}/i);
+      if (m) return m[0];
+    }
+    return pickKw();
+  };
+
+  // Method-like content
+  const methodContent = () => {
+    const m = allSentences.find(s => /\b(measured|analyzed|collected|performed|incubated|extracted)\b/i.test(s));
+    if (m) {
+      const words = m.split(/\s+/);
+      return words.length > 12 ? words.slice(0, 12).join(' ') + '...' : m;
+    }
+    return pickKw();
+  };
+
+  let en = phrase.en;
+  let ja = phrase.ja;
+
+  // Replace "..." with contextual content based on scene/position
+  if (en.includes('...')) {
+    // Count how many "..." to fill
+    const dots = en.match(/\.\.\./g) || [];
+    if (dots.length === 1) {
+      let fill;
+      if (/aim|purpose|objective|investigate/i.test(en + ja)) fill = purposeSentence();
+      else if (/result|finding|found|showed/i.test(en + ja)) fill = shortFinding();
+      else if (/method|measure|collect|sample/i.test(en + ja)) fill = methodContent();
+      else if (/consistent|agreement|contradict|differ/i.test(en + ja)) fill = shortFinding();
+      else if (/future|further/i.test(en + ja)) fill = 'the role of ' + pickKw() + ' in ' + pickKw2();
+      else if (/limitation/i.test(en + ja)) fill = 'the relatively small sample size';
+      else fill = pickKw();
+
+      en = en.replace('...', fill);
+      // Also fill ja if it has 〜
+      if (ja.includes('〜')) ja = ja.replace(/〜/g, fill);
+    } else {
+      // Multiple "..." — fill sequentially
+      let i = 0;
+      const fills = [pickKw(), pickKw2(), shortFinding()];
+      en = en.replace(/\.\.\./g, () => fills[i++] || pickKw());
+      let j = 0;
+      ja = ja.replace(/〜/g, () => fills[j++] || '...');
+    }
+  } else if (en.includes('〜') || ja.includes('〜')) {
+    const kw = pickKw();
+    en = en.replace(/〜/g, kw);
+    ja = ja.replace(/〜/g, kw);
+  }
+
+  return { ...phrase, en, ja, original: phrase.en };
+}
+
 function renderPhrases() {
   const area = document.getElementById('phraseArea');
-  phraseDeck = PHRASES_DB[phraseCat] || [];
+  const hasPaper = APP.sentences.length > 0;
+  // Fill templates with paper content if available
+  phraseDeck = (PHRASES_DB[phraseCat] || []).map(p => hasPaper ? fillPhraseWithPaper(p) : p);
   if (phraseMode === 'browse') renderPhraseBrowse(area);
   else if (phraseMode === 'flash') renderPhraseFlash(area);
   else if (phraseMode === 'dictation') renderPhraseDictation(area);
@@ -2352,16 +2434,20 @@ function renderPhrases() {
 }
 
 function renderPhraseBrowse(area) {
+  const hasPaper = APP.sentences.length > 0;
   // Group by scene
   const groups = {};
   for (const p of phraseDeck) {
     if (!groups[p.scene]) groups[p.scene] = [];
     groups[p.scene].push(p);
   }
-  area.innerHTML = Object.entries(groups).map(([scene, phrases]) => `
+  area.innerHTML = (hasPaper ? '<div style="font-size:12px;color:var(--accent);margin-bottom:12px;padding:8px 12px;background:rgba(16,185,129,.1);border-radius:8px;">論文の内容を反映した例文を表示中</div>' : '') +
+  Object.entries(groups).map(([scene, phrases]) => `
     <div style="margin-bottom:16px;">
       <div style="font-size:12px;color:var(--primary);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;padding-left:4px;">${scene}</div>
-      ${phrases.map(p => `
+      ${phrases.map(p => {
+        const isCustomized = p.original && p.original !== p.en;
+        return `
         <div class="word-card" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:6px;">
           <div style="display:flex;align-items:center;gap:8px;">
             <button class="btn-speak phrase-tts" data-text="${p.en.replace(/"/g, '&quot;')}" style="width:30px;height:30px;flex-shrink:0;">
@@ -2370,8 +2456,9 @@ function renderPhraseBrowse(area) {
             <div style="font-size:15px;line-height:1.5;color:var(--text);">${p.en}</div>
           </div>
           <div style="font-size:13px;color:var(--text3);padding-left:38px;">${p.ja}</div>
-        </div>
-      `).join('')}
+          ${isCustomized ? `<div style="font-size:11px;color:var(--text3);padding-left:38px;font-style:italic;opacity:.7;">template: ${p.original}</div>` : ''}
+        </div>`;
+      }).join('')}
     </div>
   `).join('');
 
