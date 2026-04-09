@@ -1542,6 +1542,20 @@ const SCI_JA_GLOSSARY = {
   phenology: 'フェノロジー/生物季節学',
 };
 
+// Translate English word/phrase to Japanese using MyMemory API
+async function translateToJa(text) {
+  try {
+    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ja`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const translated = data?.responseData?.translatedText;
+    if (!translated || translated === text) return null;
+    // MyMemory sometimes returns all-caps or garbage
+    if (/^[A-Z\s]+$/.test(translated)) return null;
+    return translated;
+  } catch (e) { return null; }
+}
+
 async function lookupAndFill(word) {
   const statusEl = document.getElementById('modalLookupStatus');
   const meaningEl = document.getElementById('modalMeaning');
@@ -1557,40 +1571,48 @@ async function lookupAndFill(word) {
   try {
     const result = await lookupWord(word);
     if (result) {
-      // Show phonetic
       if (result.phonetic) phoneticEl.textContent = result.phonetic;
-
-      // Show English definitions
       if (result.meanings.length > 0) {
         defEl.style.display = 'block';
         defEl.innerHTML = result.meanings.slice(0, 3).map(m =>
           `<div style="margin-bottom:6px;"><span style="color:var(--primary);font-size:12px;font-weight:600;">${m.pos}</span> ${m.def}${m.example ? `<br><span style="color:var(--text3);font-style:italic;">"${m.example}"</span>` : ''}</div>`
         ).join('');
       }
+    }
 
-      // Auto-fill Japanese meaning (only from glossary — never put English in the Japanese field)
-      if (!meaningEl.value && glossaryHit) {
+    // Fill Japanese meaning: glossary → translation API
+    if (!meaningEl.value) {
+      if (glossaryHit) {
         meaningEl.value = glossaryHit;
+        statusEl.textContent = '用語集から取得';
+        statusEl.style.color = 'var(--accent)';
+      } else {
+        statusEl.textContent = '日本語訳を取得中...';
+        const ja = await translateToJa(word);
+        if (ja) {
+          meaningEl.value = ja;
+          statusEl.textContent = '翻訳APIから取得';
+          statusEl.style.color = 'var(--accent)';
+        } else {
+          statusEl.textContent = result ? '英英定義のみ取得（日本語訳なし）' : '見つかりません';
+          statusEl.style.color = 'var(--warn)';
+        }
       }
+    } else {
       statusEl.textContent = '検索完了';
       statusEl.style.color = 'var(--accent)';
-    } else {
-      // API miss — use glossary if available
-      if (glossaryHit && !meaningEl.value) meaningEl.value = glossaryHit;
-      statusEl.textContent = glossaryHit ? '用語集から取得' : '辞書に見つかりません';
-      statusEl.style.color = glossaryHit ? 'var(--accent)' : 'var(--warn)';
     }
   } catch (e) {
     if (glossaryHit && !meaningEl.value) meaningEl.value = glossaryHit;
-    statusEl.textContent = glossaryHit ? '用語集から取得 (オフライン)' : 'ネットワークエラー';
+    statusEl.textContent = glossaryHit ? '用語集から取得' : 'ネットワークエラー';
     statusEl.style.color = glossaryHit ? 'var(--accent)' : 'var(--danger)';
   }
 }
 
 // Batch lookup for import (background, throttled)
 async function batchLookup(words) {
-  const BATCH_SIZE = 5;
-  const DELAY = 300;
+  const BATCH_SIZE = 3;
+  const DELAY = 500;
   let filled = 0;
   for (let i = 0; i < words.length; i += BATCH_SIZE) {
     const batch = words.slice(i, i + BATCH_SIZE);
@@ -1602,8 +1624,14 @@ async function batchLookup(words) {
         filled++;
         return;
       }
-      // Only glossary fills Japanese meaning; skip English-only API results
-      try { await lookupWord(word); } catch (e) { /* skip */ }
+      // Translation API fallback
+      try {
+        const ja = await translateToJa(word);
+        if (ja && APP.words[word]) {
+          APP.words[word].meaning = ja;
+          filled++;
+        }
+      } catch (e) { /* skip */ }
     }));
     if (i + BATCH_SIZE < words.length) {
       await new Promise(r => setTimeout(r, DELAY));
