@@ -1151,7 +1151,7 @@ async function handleFiles(files) {
       const aiConfig = getAIConfig();
       if (aiConfig.provider !== 'none' && aiConfig.apiKey) {
         // ---- AI解析モード ----
-        showProgress('AIが論文を解析中...', 50);
+        showProgress('AIが論文を解析中...', 10);
         try {
           const aiData = await analyzeWithAI(text, paperName);
           if (aiData) {
@@ -3298,61 +3298,106 @@ async function testAIConnection() {
 }
 
 // AI-powered paper analysis
-async function analyzeWithAI(text, paperName) {
-  const truncated = text.slice(0, 30000);
+function parseAIJSON(text) {
+  const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  return JSON.parse(cleaned);
+}
 
-  const prompt = `You are a scientific English tutor for Japanese researchers. Analyze this paper text and generate comprehensive learning materials.
+// Split text into chunks for full-paper analysis
+function chunkText(text, chunkSize = 15000) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
 
-PAPER TEXT:
-${truncated}
+async function analyzeChunk(chunk, chunkIdx, totalChunks) {
+  const prompt = `You are a scientific English tutor for Japanese researchers. Extract vocabulary and key sentences from this paper section (part ${chunkIdx + 1} of ${totalChunks}).
 
-Generate a JSON object with this exact structure (respond with ONLY valid JSON, no markdown):
+TEXT:
+${chunk}
+
+Respond with ONLY valid JSON:
 {
   "vocabulary": [
-    {
-      "word": "calcification",
-      "meaning_ja": "石灰化",
-      "meaning_en": "The process of calcium carbonate deposition",
-      "level": 2,
-      "example": "Coral calcification rates decreased under elevated CO2."
-    }
+    {"word": "calcification", "meaning_ja": "石灰化", "meaning_en": "The process of calcium carbonate deposition", "level": 2, "example": "Coral calcification rates decreased under elevated CO2."}
   ],
-  "sentences": [
-    "Important sentences extracted from the paper for exercises"
-  ],
-  "qa_questions": [
-    {
-      "question": "What was the main finding regarding calcification rates?",
-      "hint_ja": "石灰化速度に関する主な知見は？",
-      "category": "content",
-      "model_answer": "Our results showed that calcification rates decreased significantly under high CO2 conditions."
-    }
-  ]
+  "sentences": ["Key sentences from this section for English exercises"]
 }
 
 RULES:
-- vocabulary: Extract 80-100 scientific/technical terms that a Japanese researcher would benefit from learning. Include domain-specific jargon, advanced academic vocabulary, and useful collocations. Level: 1=intermediate, 2=advanced, 3=expert. Exclude basic words (the, is, have, use, show, etc.) and proper nouns.
-- meaning_ja: Accurate, concise Japanese translation for the scientific context. MUST be in Japanese (kanji/katakana). 2-8 characters preferred.
-- meaning_en: Brief English definition (one sentence).
-- example: A real sentence from the paper using this word. If not found, create a natural scientific example.
-- sentences: Extract 25-30 key sentences from the paper suitable for English exercises. Must be complete, grammatical sentences (not figure captions, references, or data tables).
-- qa_questions: Generate 15-20 realistic conference Q&A questions. Categories: content, method, critical, general. Cover the main findings, methodology choices, limitations, and implications.
-- model_answer: A well-structured example answer (2-3 sentences) the presenter could give at a conference.
-- All Japanese must be natural, accurate scientific Japanese.`;
+- Extract ALL scientific/technical terms a Japanese student would need to read this paper. Aim for as many as possible (at least 50 per section). Include: domain jargon, advanced academic words, technical verbs, scientific adjectives/adverbs.
+- Exclude: basic English (the, is, have, use, show, found, high, low, etc.), proper nouns, numbers.
+- meaning_ja: Accurate scientific Japanese. MUST be Japanese (kanji/katakana). 2-8 chars.
+- example: A sentence from the text using this word.
+- sentences: 10-15 complete grammatical sentences suitable for exercises. Not figure captions or references.
+- Level: 1=intermediate, 2=advanced, 3=expert`;
 
-  const result = await callAI(prompt, 16000);
+  const result = await callAI(prompt, 8000);
   if (!result) return null;
+  try { return parseAIJSON(result); } catch (e) { console.error('Chunk parse error:', e); return null; }
+}
 
-  // Parse JSON from response (handle markdown code blocks)
-  let json;
-  try {
-    const cleaned = result.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    json = JSON.parse(cleaned);
-  } catch (e) {
-    console.error('AI JSON parse error:', e, result.slice(0, 200));
-    return null;
+async function analyzeQA(text) {
+  // Send a summary-length portion for Q&A generation
+  const summary = text.slice(0, 25000);
+  const prompt = `You are a scientific English coach. Based on this paper, generate conference Q&A practice materials.
+
+PAPER:
+${summary}
+
+Respond with ONLY valid JSON:
+{
+  "qa_questions": [
+    {"question": "What was the main finding?", "hint_ja": "主な知見は？", "category": "content", "model_answer": "Our results showed that..."}
+  ]
+}
+
+Generate 20 realistic Q&A questions across these categories:
+- content (8): Questions about findings, interpretations, significance
+- method (5): Questions about methodology, controls, sample size, statistics
+- critical (4): Challenging questions about limitations, alternative explanations, artifacts
+- general (3): Future directions, applications, broader impact
+
+model_answer: 2-3 sentence example answer a presenter would give. Natural, confident, academic English.
+hint_ja: Japanese hint for what to address in the answer.`;
+
+  const result = await callAI(prompt, 6000);
+  if (!result) return null;
+  try { return parseAIJSON(result); } catch (e) { console.error('QA parse error:', e); return null; }
+}
+
+async function analyzeWithAI(text, paperName) {
+  const chunks = chunkText(text, 15000);
+  const merged = { vocabulary: [], sentences: [], qa_questions: [] };
+  const seenWords = new Set();
+
+  // Process chunks for vocabulary + sentences
+  for (let i = 0; i < chunks.length; i++) {
+    showProgress(`AIが論文を解析中... (${i + 1}/${chunks.length + 1})`, Math.round((i / (chunks.length + 1)) * 100));
+    const result = await analyzeChunk(chunks[i], i, chunks.length);
+    if (result) {
+      for (const v of (result.vocabulary || [])) {
+        const w = v.word.toLowerCase();
+        if (!seenWords.has(w)) {
+          seenWords.add(w);
+          merged.vocabulary.push(v);
+        }
+      }
+      merged.sentences.push(...(result.sentences || []));
+    }
   }
-  return json;
+
+  // Q&A generation (separate call with broader context)
+  showProgress('AIが質疑応答を生成中...', Math.round((chunks.length / (chunks.length + 1)) * 100));
+  const qaResult = await analyzeQA(text);
+  if (qaResult && qaResult.qa_questions) {
+    merged.qa_questions = qaResult.qa_questions;
+  }
+
+  if (merged.vocabulary.length === 0) return null;
+  return merged;
 }
 
 // Import AI-analyzed data into app
