@@ -3303,98 +3303,143 @@ function parseAIJSON(text) {
   return JSON.parse(cleaned);
 }
 
-// Split text into chunks for full-paper analysis
-function chunkText(text, chunkSize = 15000) {
-  const chunks = [];
-  for (let i = 0; i < text.length; i += chunkSize) {
-    chunks.push(text.slice(i, i + chunkSize));
-  }
-  return chunks;
-}
+// ---- Step 1: Extract word list only (lightweight, high volume) ----
+async function extractWordList(text) {
+  // Use traditional extraction first to get candidate words
+  const { wordMap } = extractWords(text);
+  const candidates = Object.keys(wordMap).sort((a, b) => wordMap[b].count - wordMap[a].count);
 
-async function analyzeChunk(chunk, chunkIdx, totalChunks) {
-  const prompt = `You are a scientific English tutor for Japanese researchers. Extract vocabulary and key sentences from this paper section (part ${chunkIdx + 1} of ${totalChunks}).
+  // Also send text to AI to find words we might have missed
+  const sample = text.slice(0, 20000);
+  const prompt = `List ALL scientific, technical, and advanced academic English words from this paper. Output ONLY a JSON array of lowercase words, nothing else. Include domain jargon, methods, measurements, chemical terms, biological terms, statistical terms, and advanced verbs/adjectives used in academic writing. Exclude basic words (the, is, are, was, have, has, do, make, take, give, get, use, show, very, much, many, also, well, just, even, still, only, both, each, such, like, than, most, more, some, other, these, those, been, being, would, could, should, while, where, when, which, about, after, before, between, during, through, within, without, under, over, into, from, with, that, this, what, they, their, them, there, here, then, than, were, will, been, had, its). Aim for 200-400 words.
 
 TEXT:
-${chunk}
+${sample}`;
 
-Respond with ONLY valid JSON:
-{
-  "vocabulary": [
-    {"word": "calcification", "meaning_ja": "石灰化", "meaning_en": "The process of calcium carbonate deposition", "level": 2, "example": "Coral calcification rates decreased under elevated CO2."}
-  ],
-  "sentences": ["Key sentences from this section for English exercises"]
+  let aiWords = [];
+  try {
+    const result = await callAI(prompt, 4000);
+    if (result) aiWords = parseAIJSON(result);
+  } catch (e) { console.warn('AI word extraction fallback:', e); }
+
+  // Merge: AI words + traditional extraction
+  const allWords = new Set([...candidates, ...aiWords.map(w => w.toLowerCase())]);
+  // Filter out very short / basic
+  const BASIC = new Set(['also','been','both','could','does','done','each','even','from','given','goes','gone','good','great','have','here','into','just','keep','know','last','less','like','long','look','made','make','many','more','most','much','must','need','next','only','over','part','same','show','some','such','take','tell','than','that','them','then','they','this','time','took','turn','upon','used','very','want','well','were','what','when','whom','wide','will','with','work','year']);
+  return [...allWords].filter(w => w.length >= 4 && !BASIC.has(w));
 }
+
+// ---- Step 2: Get Japanese translations + details for word batches ----
+async function translateWordBatch(words, paperTextSample) {
+  const wordList = words.join(', ');
+  const prompt = `You are a scientific English-Japanese dictionary. Translate these scientific terms found in a research paper.
+
+WORDS: ${wordList}
+
+CONTEXT (paper excerpt): ${paperTextSample.slice(0, 3000)}
+
+Respond with ONLY a valid JSON array:
+[{"word":"calcification","ja":"石灰化","en":"deposition of calcium carbonate","level":2}]
 
 RULES:
-- Extract ALL scientific/technical terms a Japanese student would need to read this paper. Aim for as many as possible (at least 50 per section). Include: domain jargon, advanced academic words, technical verbs, scientific adjectives/adverbs.
-- Exclude: basic English (the, is, have, use, show, found, high, low, etc.), proper nouns, numbers.
-- meaning_ja: Accurate scientific Japanese. MUST be Japanese (kanji/katakana). 2-8 chars.
-- example: A sentence from the text using this word.
-- sentences: 10-15 complete grammatical sentences suitable for exercises. Not figure captions or references.
-- Level: 1=intermediate, 2=advanced, 3=expert`;
+- ja: Accurate scientific Japanese (kanji/katakana). 2-8 characters. This is the MOST important field.
+- en: Brief English definition, one short phrase.
+- level: 1=intermediate(common academic), 2=advanced(domain-specific), 3=expert(highly specialized)
+- Translate EVERY word in the list. Do not skip any.`;
 
-  const result = await callAI(prompt, 8000);
-  if (!result) return null;
-  try { return parseAIJSON(result); } catch (e) { console.error('Chunk parse error:', e); return null; }
+  try {
+    const result = await callAI(prompt, 6000);
+    if (!result) return [];
+    return parseAIJSON(result);
+  } catch (e) { console.warn('Batch translate error:', e); return []; }
 }
 
-async function analyzeQA(text) {
-  // Send a summary-length portion for Q&A generation
-  const summary = text.slice(0, 25000);
-  const prompt = `You are a scientific English coach. Based on this paper, generate conference Q&A practice materials.
+// ---- Step 3: Extract key sentences ----
+async function extractSentences(text) {
+  const prompt = `Extract 30 key sentences from this scientific paper that would be useful for English reading/writing exercises. Choose sentences that:
+- Contain important findings or conclusions
+- Use typical academic English structures
+- Are complete and grammatically correct
+- Are NOT figure captions, table headers, or reference entries
+
+Respond with ONLY a JSON array of strings.
+
+TEXT:
+${text.slice(0, 25000)}`;
+
+  try {
+    const result = await callAI(prompt, 4000);
+    if (!result) return [];
+    return parseAIJSON(result);
+  } catch (e) { return []; }
+}
+
+// ---- Step 4: Generate Q&A ----
+async function generateQAWithAI(text) {
+  const prompt = `You are a scientific English coach. Generate conference Q&A practice for this paper.
 
 PAPER:
-${summary}
+${text.slice(0, 25000)}
 
 Respond with ONLY valid JSON:
-{
-  "qa_questions": [
-    {"question": "What was the main finding?", "hint_ja": "主な知見は？", "category": "content", "model_answer": "Our results showed that..."}
-  ]
+{"qa_questions":[{"question":"...","hint_ja":"...","category":"content","model_answer":"..."}]}
+
+Generate 20 questions:
+- content (8): About findings, interpretations, significance
+- method (5): Methodology, controls, sample size, statistics
+- critical (4): Limitations, alternative explanations, generalizability
+- general (3): Future directions, applications, impact
+
+model_answer: 2-3 sentence example answer. hint_ja: Japanese hint.`;
+
+  try {
+    const result = await callAI(prompt, 6000);
+    if (!result) return [];
+    const parsed = parseAIJSON(result);
+    return parsed.qa_questions || parsed;
+  } catch (e) { return []; }
 }
 
-Generate 20 realistic Q&A questions across these categories:
-- content (8): Questions about findings, interpretations, significance
-- method (5): Questions about methodology, controls, sample size, statistics
-- critical (4): Challenging questions about limitations, alternative explanations, artifacts
-- general (3): Future directions, applications, broader impact
-
-model_answer: 2-3 sentence example answer a presenter would give. Natural, confident, academic English.
-hint_ja: Japanese hint for what to address in the answer.`;
-
-  const result = await callAI(prompt, 6000);
-  if (!result) return null;
-  try { return parseAIJSON(result); } catch (e) { console.error('QA parse error:', e); return null; }
-}
-
+// ---- Main orchestrator ----
 async function analyzeWithAI(text, paperName) {
-  const chunks = chunkText(text, 15000);
   const merged = { vocabulary: [], sentences: [], qa_questions: [] };
-  const seenWords = new Set();
 
-  // Process chunks for vocabulary + sentences
-  for (let i = 0; i < chunks.length; i++) {
-    showProgress(`AIが論文を解析中... (${i + 1}/${chunks.length + 1})`, Math.round((i / (chunks.length + 1)) * 100));
-    const result = await analyzeChunk(chunks[i], i, chunks.length);
-    if (result) {
-      for (const v of (result.vocabulary || [])) {
-        const w = v.word.toLowerCase();
-        if (!seenWords.has(w)) {
-          seenWords.add(w);
-          merged.vocabulary.push(v);
-        }
+  // Step 1: Extract all words
+  showProgress('AIが単語を抽出中... (1/4)', 10);
+  const wordList = await extractWordList(text);
+  showProgress(`${wordList.length}語を検出。翻訳中... (2/4)`, 25);
+
+  // Step 2: Translate in batches of 80
+  const BATCH = 80;
+  for (let i = 0; i < wordList.length; i += BATCH) {
+    const batch = wordList.slice(i, i + BATCH);
+    showProgress(`翻訳中... ${Math.min(i + BATCH, wordList.length)}/${wordList.length}語 (2/4)`, 25 + (i / wordList.length) * 35);
+    const translations = await translateWordBatch(batch, text);
+    for (const t of translations) {
+      if (t.word && t.ja) {
+        // Find example sentence from text
+        const regex = new RegExp('[^.!?]*\\b' + t.word + '\\b[^.!?]*[.!?]', 'i');
+        const exMatch = text.match(regex);
+        merged.vocabulary.push({
+          word: t.word.toLowerCase(),
+          meaning_ja: t.ja,
+          meaning_en: t.en || '',
+          level: t.level || 1,
+          example: exMatch ? exMatch[0].trim() : ''
+        });
       }
-      merged.sentences.push(...(result.sentences || []));
     }
   }
 
-  // Q&A generation (separate call with broader context)
-  showProgress('AIが質疑応答を生成中...', Math.round((chunks.length / (chunks.length + 1)) * 100));
-  const qaResult = await analyzeQA(text);
-  if (qaResult && qaResult.qa_questions) {
-    merged.qa_questions = qaResult.qa_questions;
-  }
+  // Step 3: Key sentences
+  showProgress('例文を抽出中... (3/4)', 65);
+  merged.sentences = await extractSentences(text);
+
+  // Step 4: Q&A
+  showProgress('質疑応答を生成中... (4/4)', 80);
+  merged.qa_questions = await generateQAWithAI(text);
+
+  showProgress(`完了: ${merged.vocabulary.length}語, ${merged.sentences.length}文, ${merged.qa_questions.length}問`, 100);
 
   if (merged.vocabulary.length === 0) return null;
   return merged;
