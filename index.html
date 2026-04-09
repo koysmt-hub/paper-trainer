@@ -757,14 +757,61 @@ function difficultyColor(level) {
   return ['', 'var(--primary)', 'var(--warn)', 'var(--danger)'][level] || '';
 }
 
+// Clean PDF extraction junk before processing
+function cleanPdfText(text) {
+  let t = text;
+  // Remove figure/table captions fragments: "Fig. 1", "Table 2", standalone labels
+  t = t.replace(/\b(Fig|Figure|Table|Scheme|Chart|Plate)\s*\.?\s*\d+[a-zA-Z]?\b\.?/gi, ' ');
+  // Remove lines that are mostly numbers (axis labels, data tables)
+  t = t.replace(/^[\d\s.,%°±()\-/+<>=]+$/gm, ' ');
+  // Remove chemical formulas standing alone: CaCO3, CO2, H2O, NaOH etc.
+  t = t.replace(/\b[A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)*[²³]?\s*[?%°]\s*/g, ' ');
+  // Remove reference markers: [1], [2,3], (1), etc.
+  t = t.replace(/\[\d+(?:[,;\s]\d+)*\]/g, ' ');
+  t = t.replace(/\(\d+(?:[,;\s]\d+)*\)/g, ' ');
+  // Remove DOI, URL patterns
+  t = t.replace(/https?:\/\/\S+/g, ' ');
+  t = t.replace(/doi[:\s]*\S+/gi, ' ');
+  // Remove standalone single letters/numbers (axis labels)
+  t = t.replace(/\b[a-zA-Z]\b(?=\s+\d)/g, ' ');
+  // Remove lines with too many numbers relative to words
+  t = t.split('\n').filter(line => {
+    const nums = (line.match(/\d+/g) || []).length;
+    const words = (line.match(/[a-zA-Z]{3,}/g) || []).length;
+    // If more numbers than words, it's likely a table/axis
+    if (nums > 3 && nums > words * 2) return false;
+    return true;
+  }).join('\n');
+  // Collapse whitespace
+  t = t.replace(/\s+/g, ' ').trim();
+  return t;
+}
+
+function isGoodSentence(s) {
+  const words = s.split(/\s+/);
+  const wordCount = words.length;
+  if (wordCount < 5 || wordCount > 60) return false;
+  // Count actual English words vs numbers/symbols
+  const engWords = words.filter(w => /[a-zA-Z]{2,}/.test(w)).length;
+  // At least 60% must be real words
+  if (engWords / wordCount < 0.6) return false;
+  // Skip if it looks like a caption or header
+  if (/^(Fig|Figure|Table|Source|Note|See|Adapted|Modified|Data|Values?|Unit)/i.test(s)) return false;
+  // Skip reference list entries
+  if (/^\d+\.\s*[A-Z][a-z]+,?\s+[A-Z]\./.test(s)) return false;
+  return true;
+}
+
 function extractWords(text) {
+  // Clean PDF junk first
+  text = cleanPdfText(text);
   // Split into sentences
   const sentenceRegex = /[^.!?]+[.!?]+/g;
   const sentences = [];
   let match;
   while ((match = sentenceRegex.exec(text)) !== null) {
     const s = match[0].trim();
-    if (s.split(/\s+/).length >= 4) sentences.push(s);
+    if (isGoodSentence(s)) sentences.push(s);
   }
 
   // Build a set of likely proper nouns (capitalized mid-sentence)
