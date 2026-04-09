@@ -3388,12 +3388,42 @@ model_answer: 2-3 sentence example answer. hint_ja: Japanese hint.`;
 async function analyzeWithAI(text, paperName) {
   const merged = { vocabulary: [], sentences: [], qa_questions: [] };
 
-  // Step 1: Extract all words (client-side, no AI needed)
-  showProgress('単語を抽出中... (1/4)', 5);
+  // Step 1: Extract all candidate words (client-side)
+  showProgress('単語を抽出中... (1/5)', 5);
   const wordList = extractWordList(text);
-  // First fill from built-in glossary (instant, no API cost)
-  const needTranslation = [];
+
+  // Glossary words go straight in
+  const glossaryWords = [];
+  const candidateWords = [];
   for (const w of wordList) {
+    if (SCI_JA_GLOSSARY[w]) glossaryWords.push(w);
+    else candidateWords.push(w);
+  }
+  showProgress(`${wordList.length}語検出。AIが選別中... (2/5)`, 10);
+
+  // Step 2: AI selects which words are worth studying (100 words per batch)
+  const selectedWords = [...glossaryWords]; // glossary words always included
+  const FILTER_BATCH = 150;
+  for (let i = 0; i < candidateWords.length; i += FILTER_BATCH) {
+    const batch = candidateWords.slice(i, i + FILTER_BATCH);
+    showProgress(`AIが選別中... ${i}/${candidateWords.length}語 (2/5)`, 10 + (i / Math.max(candidateWords.length, 1)) * 20);
+    try {
+      const prompt = `From this word list extracted from a scientific paper, select ONLY the words that a Japanese graduate student would need to study to read and present this paper at a conference. Include: scientific terminology, technical jargon, advanced academic vocabulary, statistical terms, methodology terms. Exclude: common everyday English, basic verbs (make, take, give, keep, move, turn, bring, hold, seem, look), basic nouns (area, part, side, point, case, type, form, group, place, fact, kind), basic adjectives (large, small, high, low, good, different, important, possible, available). Return ONLY a JSON array of selected words.
+
+Words: ${batch.join(', ')}`;
+      const result = await callAI(prompt, 3000);
+      if (result) {
+        const selected = parseAIJSON(result);
+        selectedWords.push(...selected.map(w => w.toLowerCase()));
+      }
+    } catch (e) { console.warn('Filter batch error:', e); }
+  }
+
+  showProgress(`${selectedWords.length}語を選別。翻訳中... (3/5)`, 30);
+
+  // Step 3: Fill from glossary + AI translate the rest
+  const needTranslation = [];
+  for (const w of selectedWords) {
     const glossaryHit = SCI_JA_GLOSSARY[w];
     if (glossaryHit) {
       const regex = new RegExp('[^.!?]*\\b' + w + '\\b[^.!?]*[.!?]', 'i');
@@ -3406,44 +3436,31 @@ async function analyzeWithAI(text, paperName) {
       needTranslation.push(w);
     }
   }
-  showProgress(`${wordList.length}語検出 (用語集${merged.vocabulary.length}語済)。AI翻訳${needTranslation.length}語... (2/4)`, 15);
 
-  // Step 2: Translate remaining words in small batches of 25
-  const BATCH = 25;
-  const translated = new Set();
+  // Translate in batches of 30
+  const BATCH = 30;
   for (let i = 0; i < needTranslation.length; i += BATCH) {
     const batch = needTranslation.slice(i, i + BATCH);
-    const done = merged.vocabulary.length;
-    showProgress(`翻訳中... ${done}/${wordList.length}語 (2/4)`, 15 + (i / Math.max(needTranslation.length, 1)) * 45);
+    showProgress(`翻訳中... ${merged.vocabulary.length}/${selectedWords.length}語 (3/5)`, 30 + (i / Math.max(needTranslation.length, 1)) * 30);
     try {
       const translations = await translateWordBatch(batch);
-      // Map AI results by word
       const aiMap = {};
       for (const t of translations) {
         const w = (t.w || t.word || '').toLowerCase();
         if (w) aiMap[w] = t;
       }
-      // Process ALL words in batch — use AI result if available, otherwise add without translation
       for (const bw of batch) {
-        if (translated.has(bw)) continue;
-        translated.add(bw);
         const t = aiMap[bw];
         const regex = new RegExp('[^.!?]*\\b' + bw + '\\b[^.!?]*[.!?]', 'i');
         const exMatch = text.match(regex);
         merged.vocabulary.push({
-          word: bw,
-          meaning_ja: t?.ja || '',
-          meaning_en: t?.en || '',
+          word: bw, meaning_ja: t?.ja || '', meaning_en: t?.en || '',
           level: t?.lv || t?.level || 1,
           example: exMatch ? exMatch[0].trim() : ''
         });
       }
     } catch (e) {
-      // Even on error, add words without translation
-      console.warn('Batch error, adding words without translation:', e);
       for (const bw of batch) {
-        if (translated.has(bw)) continue;
-        translated.add(bw);
         const regex = new RegExp('[^.!?]*\\b' + bw + '\\b[^.!?]*[.!?]', 'i');
         const exMatch = text.match(regex);
         merged.vocabulary.push({ word: bw, meaning_ja: '', meaning_en: '', level: 1, example: exMatch ? exMatch[0].trim() : '' });
@@ -3451,12 +3468,12 @@ async function analyzeWithAI(text, paperName) {
     }
   }
 
-  // Step 3: Key sentences
-  showProgress('例文を抽出中... (3/4)', 65);
+  // Step 4: Key sentences
+  showProgress('例文を抽出中... (4/5)', 65);
   merged.sentences = await extractSentences(text);
 
-  // Step 4: Q&A
-  showProgress('質疑応答を生成中... (4/4)', 80);
+  // Step 5: Q&A
+  showProgress('質疑応答を生成中... (5/5)', 80);
   merged.qa_questions = await generateQAWithAI(text);
 
   showProgress(`完了: ${merged.vocabulary.length}語, ${merged.sentences.length}文, ${merged.qa_questions.length}問`, 100);
