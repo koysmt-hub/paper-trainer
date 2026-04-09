@@ -3254,7 +3254,13 @@ async function callAI(prompt, maxTokens = 4096) {
         temperature: 0.3
       })
     });
-    if (!res.ok) throw new Error(`OpenAI API error: ${res.status}`);
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      const msg = errBody?.error?.message || `status ${res.status}`;
+      if (res.status === 429) throw new Error('OpenAI: レート制限またはクレジット不足です。https://platform.openai.com/settings/organization/billing でクレジットを確認してください。');
+      if (res.status === 401) throw new Error('OpenAI: APIキーが無効です。再発行してください。');
+      throw new Error(`OpenAI: ${msg}`);
+    }
     const data = await res.json();
     return data.choices[0].message.content;
   }
