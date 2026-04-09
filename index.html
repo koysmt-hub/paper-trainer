@@ -952,31 +952,21 @@ if ('speechSynthesis' in window) {
 
 function speak(text, lang = 'en-US') {
   if (!('speechSynthesis' in window) || !text) return;
-  // MUST be synchronous from user gesture — no setTimeout on iOS
-  speechSynthesis.cancel();
-  // iOS: pause/resume workaround for stuck state
-  speechSynthesis.pause();
-  speechSynthesis.resume();
-  const utter = new SpeechSynthesisUtterance(text);
+  // Stop any current speech
+  if (speechSynthesis.speaking || speechSynthesis.pending) {
+    speechSynthesis.cancel();
+  }
+  const utter = new SpeechSynthesisUtterance(String(text));
   utter.lang = lang;
   utter.rate = 0.85;
+  utter.volume = 1.0;
   if (cachedVoices.length === 0) cachedVoices = speechSynthesis.getVoices();
   const enVoice = cachedVoices.find(v => v.lang === 'en-US')
     || cachedVoices.find(v => v.lang.startsWith('en-US'))
     || cachedVoices.find(v => v.lang.startsWith('en'));
   if (enVoice) utter.voice = enVoice;
+  utter.onerror = (e) => console.warn('Speech error:', e.error);
   speechSynthesis.speak(utter);
-  // iOS Safari 15+ bug: speech stops after ~15s. Keep it alive.
-  let keepAlive;
-  utter.onstart = () => {
-    keepAlive = setInterval(() => {
-      if (!speechSynthesis.speaking) { clearInterval(keepAlive); return; }
-      speechSynthesis.pause();
-      speechSynthesis.resume();
-    }, 5000);
-  };
-  utter.onend = () => clearInterval(keepAlive);
-  utter.onerror = () => clearInterval(keepAlive);
   return utter;
 }
 
@@ -3309,9 +3299,9 @@ async function testAIConnection() {
 
 // AI-powered paper analysis
 async function analyzeWithAI(text, paperName) {
-  const truncated = text.slice(0, 12000); // API token limit
+  const truncated = text.slice(0, 30000);
 
-  const prompt = `You are a scientific English tutor for Japanese researchers. Analyze this paper text and generate learning materials.
+  const prompt = `You are a scientific English tutor for Japanese researchers. Analyze this paper text and generate comprehensive learning materials.
 
 PAPER TEXT:
 ${truncated}
@@ -3341,15 +3331,16 @@ Generate a JSON object with this exact structure (respond with ONLY valid JSON, 
 }
 
 RULES:
-- vocabulary: Extract 30-50 scientific/technical terms. Level: 1=intermediate, 2=advanced, 3=expert
-- meaning_ja: Concise Japanese translation (2-8 chars preferred). Must be accurate scientific Japanese.
-- example: A sentence from the paper using this word, or a natural example sentence.
-- sentences: Extract 15-20 key sentences suitable for English exercises (not figure captions or references).
-- qa_questions: Generate 10-15 realistic conference Q&A questions about this paper's content. Categories: content, method, critical, general
-- model_answer: A good example answer the presenter could give.
-- All Japanese must be natural and accurate.`;
+- vocabulary: Extract 80-100 scientific/technical terms that a Japanese researcher would benefit from learning. Include domain-specific jargon, advanced academic vocabulary, and useful collocations. Level: 1=intermediate, 2=advanced, 3=expert. Exclude basic words (the, is, have, use, show, etc.) and proper nouns.
+- meaning_ja: Accurate, concise Japanese translation for the scientific context. MUST be in Japanese (kanji/katakana). 2-8 characters preferred.
+- meaning_en: Brief English definition (one sentence).
+- example: A real sentence from the paper using this word. If not found, create a natural scientific example.
+- sentences: Extract 25-30 key sentences from the paper suitable for English exercises. Must be complete, grammatical sentences (not figure captions, references, or data tables).
+- qa_questions: Generate 15-20 realistic conference Q&A questions. Categories: content, method, critical, general. Cover the main findings, methodology choices, limitations, and implications.
+- model_answer: A well-structured example answer (2-3 sentences) the presenter could give at a conference.
+- All Japanese must be natural, accurate scientific Japanese.`;
 
-  const result = await callAI(prompt, 8000);
+  const result = await callAI(prompt, 16000);
   if (!result) return null;
 
   // Parse JSON from response (handle markdown code blocks)
