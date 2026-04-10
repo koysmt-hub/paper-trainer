@@ -3339,28 +3339,40 @@ Words: ${wordList}`;
 }
 
 // ---- Step 3: Extract key sentences ----
-async function extractSentences(text) {
-  const prompt = `Extract 30 key sentences from this scientific paper that would be useful for English reading/writing exercises. Choose sentences that:
-- Contain important findings or conclusions
-- Use typical academic English structures
-- Are complete and grammatically correct
-- Are NOT figure captions, table headers, or reference entries
+function extractSentencesFromText(text) {
+  // Split into sentences, filter for quality
+  const raw = text.match(/[^.!?]+[.!?]+/g) || [];
+  return raw
+    .map(s => s.trim().replace(/\s+/g, ' '))
+    .filter(s => {
+      const words = s.split(/\s+/);
+      if (words.length < 8 || words.length > 40) return false;
+      const engWords = words.filter(w => /[a-zA-Z]{2,}/.test(w)).length;
+      if (engWords / words.length < 0.7) return false;
+      if (/^(Fig|Figure|Table|Source|Note|See|Adapted|Modified|\d+\.)/.test(s)) return false;
+      if (/^\s*\[/.test(s)) return false;
+      return true;
+    });
+}
 
-Respond with ONLY a JSON array of strings.
+async function selectBestSentences(sentences) {
+  if (sentences.length <= 50) return sentences;
+  // Send to AI to pick the best 50 for learning
+  const numbered = sentences.slice(0, 150).map((s, i) => `${i}: ${s}`).join('\n');
+  const prompt = `From these sentences extracted from a scientific paper, select the 50 most useful for English learning exercises. Choose sentences with: important findings, clear academic structures, useful vocabulary, methodology descriptions. Return ONLY a JSON array of the index numbers (integers).
 
-TEXT:
-${text.slice(0, 25000)}`;
-
+${numbered}`;
   try {
-    const result = await callAI(prompt, 4000);
-    if (!result) return [];
-    return parseAIJSON(result);
-  } catch (e) { return []; }
+    const result = await callAI(prompt, 1000);
+    if (!result) return sentences.slice(0, 50);
+    const indices = parseAIJSON(result);
+    return indices.map(i => sentences[i]).filter(Boolean);
+  } catch (e) { return sentences.slice(0, 50); }
 }
 
 // ---- Step 4: Generate Q&A ----
 async function generateQAWithAI(text) {
-  const prompt = `You are a scientific English coach. Generate conference Q&A practice for this paper.
+  const prompt = `You are coaching a Japanese scientist to handle Q&A at an international conference. Based on this paper, generate realistic questions that audience members would actually ask, with polished model answers.
 
 PAPER:
 ${text.slice(0, 25000)}
@@ -3369,12 +3381,19 @@ Respond with ONLY valid JSON:
 {"qa_questions":[{"question":"...","hint_ja":"...","category":"content","model_answer":"..."}]}
 
 Generate 20 questions:
-- content (8): About findings, interpretations, significance
-- method (5): Methodology, controls, sample size, statistics
-- critical (4): Limitations, alternative explanations, generalizability
-- general (3): Future directions, applications, impact
+- content (8): Specific questions about the paper's findings, data interpretation, and significance
+- method (5): Why specific methods were chosen, controls, statistical approaches, sample sizes
+- critical (4): Tough questions: limitations, confounding factors, alternative explanations, reproducibility concerns
+- general (3): Future directions, broader implications, applications
 
-model_answer: 2-3 sentence example answer. hint_ja: Japanese hint.`;
+IMPORTANT for model_answer:
+- Write 3-4 sentences as a confident researcher would actually speak at a conference
+- Start with an appropriate opener ("Thank you for that question.", "That's an excellent point.", etc.)
+- Use specific data/findings from the paper in the answer
+- End with a forward-looking statement when appropriate
+- Must sound natural and fluent, not textbook-like
+
+hint_ja: Concise Japanese guidance on what to address (1-2 sentences).`;
 
   try {
     const result = await callAI(prompt, 6000);
@@ -3421,16 +3440,21 @@ Words: ${batch.join(', ')}`;
 
   showProgress(`${selectedWords.length}語を選別。翻訳中... (3/5)`, 30);
 
+  // Pre-extract all clean sentences from paper for example lookup
+  const paperSentences = extractSentencesFromText(text);
+  function findExample(word) {
+    const re = new RegExp('\\b' + word + '\\b', 'i');
+    return paperSentences.find(s => re.test(s)) || '';
+  }
+
   // Step 3: Fill from glossary + AI translate the rest
   const needTranslation = [];
   for (const w of selectedWords) {
     const glossaryHit = SCI_JA_GLOSSARY[w];
     if (glossaryHit) {
-      const regex = new RegExp('[^.!?]*\\b' + w + '\\b[^.!?]*[.!?]', 'i');
-      const exMatch = text.match(regex);
       merged.vocabulary.push({
         word: w, meaning_ja: glossaryHit, meaning_en: '', level: 1,
-        example: exMatch ? exMatch[0].trim() : ''
+        example: findExample(w)
       });
     } else {
       needTranslation.push(w);
@@ -3451,26 +3475,23 @@ Words: ${batch.join(', ')}`;
       }
       for (const bw of batch) {
         const t = aiMap[bw];
-        const regex = new RegExp('[^.!?]*\\b' + bw + '\\b[^.!?]*[.!?]', 'i');
-        const exMatch = text.match(regex);
         merged.vocabulary.push({
           word: bw, meaning_ja: t?.ja || '', meaning_en: t?.en || '',
           level: t?.lv || t?.level || 1,
-          example: exMatch ? exMatch[0].trim() : ''
+          example: findExample(bw)
         });
       }
     } catch (e) {
       for (const bw of batch) {
-        const regex = new RegExp('[^.!?]*\\b' + bw + '\\b[^.!?]*[.!?]', 'i');
-        const exMatch = text.match(regex);
-        merged.vocabulary.push({ word: bw, meaning_ja: '', meaning_en: '', level: 1, example: exMatch ? exMatch[0].trim() : '' });
+        merged.vocabulary.push({ word: bw, meaning_ja: '', meaning_en: '', level: 1, example: findExample(bw) });
       }
     }
   }
 
-  // Step 4: Key sentences
-  showProgress('例文を抽出中... (4/5)', 65);
-  merged.sentences = await extractSentences(text);
+  // Step 4: Key sentences (from actual paper text, not AI-generated)
+  showProgress('論文から例文を選別中... (4/5)', 65);
+  const allSentences = extractSentencesFromText(text);
+  merged.sentences = await selectBestSentences(allSentences);
 
   // Step 5: Q&A
   showProgress('質疑応答を生成中... (5/5)', 80);
